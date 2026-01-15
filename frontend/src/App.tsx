@@ -13,6 +13,7 @@ const dbEngine = new DatabaseAPI();
 
 function App() {
   const [dbState, setDbState] = useState<DatabaseState | null>(null);
+  const [databases, setDatabases] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [tabs, setTabs] = useState<TabItem[]>([
     { id: '1', type: 'sql', title: 'SQL Query 1', active: true },
@@ -26,8 +27,12 @@ function App() {
   useEffect(() => {
     const loadInitialState = async () => {
       try {
-        const state = await dbEngine.getDatabaseState();
+        const [state, dbList] = await Promise.all([
+          dbEngine.getDatabaseState(),
+          dbEngine.listDatabases()
+        ]);
         setDbState(state);
+        setDatabases(dbList);
         setLoading(false);
       } catch (error) {
         console.error('Failed to load database state:', error);
@@ -48,15 +53,29 @@ function App() {
 
   const refreshState = async () => {
       try {
-        const state = await dbEngine.getDatabaseState();
+        const [state, dbList] = await Promise.all([
+          dbEngine.getDatabaseState(true), // Force refresh
+          dbEngine.listDatabases()
+        ]);
         // Ensure we trigger a re-render by creating a new reference for the tables array
         setDbState({
             name: state.name,
             tables: [...state.tables]
         });
+        setDatabases(dbList);
       } catch (error) {
         console.error('Failed to refresh database state:', error);
       }
+  };
+
+  const handleSwitchDatabase = async (dbName: string) => {
+    try {
+      await dbEngine.switchDatabase(dbName);
+      await refreshState();
+      setTabs([{ id: 'new', type: 'sql', title: 'New Query', active: true }]); // Reset tabs for new DB
+    } catch (error) {
+      console.error('Failed to switch database:', error);
+    }
   };
 
   const activeTab = tabs.find(t => t.active);
@@ -153,6 +172,22 @@ function App() {
       addTab('sql', `Select ${tableName}`, `SELECT * FROM ${tableName} LIMIT 1000;`);
   };
 
+  const handleRenameTable = async (tableName: string) => {
+      const newName = prompt(`Rename table '${tableName}' to:`, tableName);
+      if (newName && newName !== tableName) {
+          try {
+              const table = dbState.tables.find(t => t.name === tableName);
+              if (table) {
+                  const updatedTable = { ...table, name: newName };
+                  await dbEngine.updateTable(tableName, updatedTable);
+                  await refreshState();
+              }
+          } catch (e: any) {
+              alert(e.message);
+          }
+      }
+  };
+
   const handleResetDemo = async () => {
       await dbEngine.resetDatabase();
       await refreshState();
@@ -200,13 +235,16 @@ function App() {
       {/* Sidebar */}
       <Sidebar
         dbState={dbState}
+        databases={databases}
         onSelectTable={(name) => addTab('table-data', name, name)}
         onDropTable={handleDropTable}
         onCreateTable={() => addTab('designer', 'New Table')}
         onCreateDatabase={handleCreateDatabase}
+        onSwitchDatabase={handleSwitchDatabase}
         onOpenSchema={handleOpenSchema}
         onScriptTable={handleScriptTable}
         onEditTable={handleEditTable}
+        onRenameTable={handleRenameTable}
       />
 
       {/* Main Content */}

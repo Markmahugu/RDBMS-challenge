@@ -1,7 +1,7 @@
 import time
 import re
 from typing import Dict, List, Any, Optional
-from models import (
+from .models import (
     DatabaseState, TableSchema, ColumnSchema, QueryResult,
     ExecutionPlanNode, DataType, IndexSchema
 )
@@ -13,15 +13,24 @@ class DatabaseEngine:
         self.current_db_name: str = 'DemoDB'
         self.reset_database()
 
+    def _clean_sql_query(self, query: str) -> str:
+        """Remove SQL comments from query"""
+        # Remove single-line comments (--)
+        query = re.sub(r'--.*', '', query)
+        # Remove multi-line comments (/* */)
+        query = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
+        # Remove extra whitespace and empty lines
+        lines = [line.strip() for line in query.split('\n') if line.strip()]
+        return '\n'.join(lines)
+
     def reset_database(self) -> None:
-        """Reset to demo database with sample data"""
+        """Reset to empty database"""
         self.databases = {
             'DemoDB': DatabaseState(
                 name='DemoDB',
                 tables=[]
             )
         }
-        self._seed_demo_data('DemoDB')
 
     def _seed_demo_data(self, db_name: str) -> None:
         """Create demo tables with sample data"""
@@ -148,33 +157,65 @@ class DatabaseEngine:
         start_time = time.time()
 
         try:
-            q = query.strip().upper()
+            # Clean the query by removing comments
+            query = self._clean_sql_query(query)
 
-            if q.startswith('SELECT'):
-                return self._handle_select(query, start_time)
-            elif q.startswith('INSERT'):
-                return self._handle_insert(query, start_time)
-            elif q.startswith('UPDATE'):
-                return self._handle_update(query, start_time)
-            elif q.startswith('DELETE'):
-                return self._handle_delete(query, start_time)
-            elif q.startswith('CREATE TABLE'):
+            # Split query into individual statements
+            statements = [stmt.strip() for stmt in query.split(';') if stmt.strip()]
+
+            results = []
+            for stmt in statements:
+                stmt = stmt.strip()
+                if not stmt:
+                    continue
+
+                q = stmt.upper()
+
+                if q.startswith('SELECT'):
+                    result = self._handle_select(stmt, start_time)
+                elif q.startswith('INSERT'):
+                    result = self._handle_insert(stmt, start_time)
+                elif q.startswith('UPDATE'):
+                    result = self._handle_update(stmt, start_time)
+                elif q.startswith('DELETE'):
+                    result = self._handle_delete(stmt, start_time)
+                elif q.startswith('CREATE DATABASE'):
+                    result = self._handle_create_database(stmt, start_time)
+                elif q.startswith('CREATE TABLE'):
+                    result = self._handle_create_table(stmt, start_time)
+                elif q.startswith('DROP TABLE'):
+                    parts = stmt.split()
+                    table_name = parts[2].replace(';', '').strip()
+                    self.drop_table(table_name)
+                    result = QueryResult(
+                        success=True,
+                        message=f'Table {table_name} dropped',
+                        executionTime=time.time() - start_time
+                    )
+                else:
+                    raise ValueError("Unsupported SQL command")
+
+                results.append(result)
+                if not result.success:
+                    break
+
+            # Return the last result or a combined success message
+            if len(results) == 1:
+                return results[0]
+            elif all(r.success for r in results):
+                total_time = time.time() - start_time
                 return QueryResult(
                     success=True,
-                    message='CREATE TABLE simulated (use API for full features)',
-                    executionTime=time.time() - start_time
-                )
-            elif q.startswith('DROP TABLE'):
-                parts = query.split()
-                table_name = parts[2].replace(';', '').strip()
-                self.drop_table(table_name)
-                return QueryResult(
-                    success=True,
-                    message=f'Table {table_name} dropped',
-                    executionTime=time.time() - start_time
+                    message=f"{len(results)} statements executed successfully",
+                    executionTime=total_time
                 )
             else:
-                raise ValueError("Unsupported SQL command")
+                failed_result = next((r for r in results if not r.success), None)
+                return failed_result or QueryResult(
+                    success=False,
+                    message="Multiple statement execution failed",
+                    executionTime=time.time() - start_time
+                )
 
         except Exception as e:
             return QueryResult(
@@ -301,51 +342,65 @@ class DatabaseEngine:
         """Handle INSERT queries"""
         db = self.databases[self.current_db_name]
 
-        # Parse INSERT statement
+        # Parse INSERT statement - handle multiple rows
         match = re.search(
-            r'INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)',
+            r'INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+)$',
             query,
-            re.IGNORECASE
+            re.IGNORECASE | re.DOTALL
         )
         if not match:
             raise ValueError("Invalid INSERT syntax")
 
         table_name = match.group(1)
         cols_str = match.group(2)
-        vals_str = match.group(3)
+        values_part = match.group(3).strip()
 
         table = next((t for t in db.tables if t.name == table_name), None)
         if not table:
             raise ValueError(f"Table '{table_name}' not found")
 
         cols = [c.strip() for c in cols_str.split(',')]
-        vals = [v.strip().strip("'\"") for v in vals_str.split(',')]
 
-        new_row = {}
-        for col_name, val in zip(cols, vals):
-            # Convert types
-            col_def = next((c for c in table.columns if c.name == col_name), None)
-            if col_def:
-                if col_def.type in ['INT', 'DECIMAL']:
-                    try:
-                        new_row[col_name] = int(float(val))
-                    except:
-                        new_row[col_name] = val
+        # Parse multiple value rows
+        # Find all value tuples: (val1, val2, ...), (val3, val4, ...)
+        value_tuples = re.findall(r'\(([^)]+)\)', values_part)
+
+        rows_inserted = 0
+        for tuple_str in value_tuples:
+            vals = [v.strip().strip("'\"") for v in tuple_str.split(',')]
+
+            new_row = {}
+            for col_name, val in zip(cols, vals):
+                # Handle NULL values
+                if val.upper() == 'NULL':
+                    new_row[col_name] = None
                 else:
-                    new_row[col_name] = val
-            else:
-                new_row[col_name] = val
+                    # Convert types
+                    col_def = next((c for c in table.columns if c.name == col_name), None)
+                    if col_def:
+                        if col_def.type in ['INT', 'DECIMAL']:
+                            try:
+                                new_row[col_name] = int(float(val))
+                            except:
+                                new_row[col_name] = val
+                        else:
+                            new_row[col_name] = val
+                    else:
+                        new_row[col_name] = val
 
-        # Auto-generate ID if not provided
-        if 'id' not in new_row:
-            new_row['id'] = max((r.get('id', 0) for r in table.rows), default=0) + 1
+            # Auto-generate ID if not provided and column has autoIncrement
+            auto_inc_col = next((c for c in table.columns if getattr(c, 'autoIncrement', False)), None)
+            if auto_inc_col and auto_inc_col.name not in new_row:
+                existing_ids = [r.get(auto_inc_col.name, 0) for r in table.rows if r.get(auto_inc_col.name) is not None]
+                new_row[auto_inc_col.name] = max(existing_ids, default=0) + 1
 
-        table.rows.append(new_row)
+            table.rows.append(new_row)
+            rows_inserted += 1
 
         return QueryResult(
             success=True,
-            message="1 row inserted",
-            affectedRows=1,
+            message=f"{rows_inserted} row(s) inserted",
+            affectedRows=rows_inserted,
             executionTime=time.time() - start_time
         )
 
@@ -386,5 +441,95 @@ class DatabaseEngine:
             success=True,
             message=f"{original_count - len(table.rows)} rows deleted",
             affectedRows=original_count - len(table.rows),
+            executionTime=time.time() - start_time
+        )
+
+    def _handle_create_database(self, query: str, start_time: float) -> QueryResult:
+        """Handle CREATE DATABASE queries"""
+        match = re.search(r'CREATE\s+DATABASE\s+(\w+)', query, re.IGNORECASE)
+        if not match:
+            raise ValueError("Invalid CREATE DATABASE syntax")
+
+        db_name = match.group(1)
+        self.create_database(db_name)
+
+        return QueryResult(
+            success=True,
+            message=f"Database '{db_name}' created successfully",
+            executionTime=time.time() - start_time
+        )
+
+    def _handle_create_table(self, query: str, start_time: float) -> QueryResult:
+        """Handle CREATE TABLE queries"""
+        # Parse table name
+        table_match = re.search(r'CREATE\s+TABLE\s+(\w+)\s*\(', query, re.IGNORECASE)
+        if not table_match:
+            raise ValueError("Invalid CREATE TABLE syntax")
+
+        table_name = table_match.group(1)
+
+        # Extract column definitions between parentheses
+        columns_part = re.search(r'CREATE\s+TABLE\s+\w+\s*\((.*)\)', query, re.IGNORECASE | re.DOTALL)
+        if not columns_part:
+            raise ValueError("Invalid CREATE TABLE syntax")
+
+        columns_str = columns_part.group(1).strip()
+        # Remove trailing semicolon if present
+        columns_str = columns_str.rstrip(';').strip()
+
+        # Parse column definitions
+        columns = []
+        column_defs = [col.strip() for col in columns_str.split(',') if col.strip()]
+
+        for i, col_def in enumerate(column_defs):
+            col_parts = col_def.split()
+            if len(col_parts) < 2:
+                raise ValueError(f"Invalid column definition: {col_def}")
+
+            col_name = col_parts[0]
+            col_type_str = col_parts[1].upper()
+
+            # Parse data type
+            if col_type_str.startswith('VARCHAR'):
+                # Extract length from VARCHAR(50)
+                length_match = re.search(r'VARCHAR\((\d+)\)', col_type_str)
+                col_type = 'VARCHAR'
+                length = int(length_match.group(1)) if length_match else None
+            elif col_type_str == 'INT':
+                col_type = 'INT'
+                length = None
+            else:
+                raise ValueError(f"Unsupported data type: {col_type_str}")
+
+            # Check for PRIMARY KEY
+            is_primary_key = 'PRIMARY KEY' in col_def.upper()
+            nullable = not is_primary_key  # Primary keys are typically not nullable
+
+            # Create column schema
+            column = ColumnSchema(
+                id=f"{table_name}_col_{i}",
+                name=col_name,
+                type=col_type,
+                length=length,
+                nullable=nullable,
+                isPrimaryKey=is_primary_key
+            )
+            columns.append(column)
+
+        # Create table schema
+        table_schema = TableSchema(
+            id=table_name,
+            name=table_name,
+            columns=columns,
+            indexes=[],
+            rows=[]
+        )
+
+        # Create the table
+        self.create_table(table_schema)
+
+        return QueryResult(
+            success=True,
+            message=f"Table '{table_name}' created successfully",
             executionTime=time.time() - start_time
         )

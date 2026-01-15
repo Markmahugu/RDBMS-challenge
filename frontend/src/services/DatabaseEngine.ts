@@ -31,8 +31,8 @@ export class DatabaseAPI {
     return response.json();
   }
 
-  public async getDatabaseState(): Promise<DatabaseState> {
-    if (!this.dbState) {
+  public async getDatabaseState(forceRefresh: boolean = false): Promise<DatabaseState> {
+    if (!this.dbState || forceRefresh) {
       this.dbState = await this.apiRequest<DatabaseState>(`/databases/${this.currentDbName}`);
     }
     return this.dbState;
@@ -43,6 +43,15 @@ export class DatabaseAPI {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
+    this.currentDbName = name;
+    this.dbState = null; // Force refresh
+  }
+
+  public async listDatabases(): Promise<string[]> {
+    return this.apiRequest<string[]>('/databases');
+  }
+
+  public async switchDatabase(name: string): Promise<void> {
     this.currentDbName = name;
     this.dbState = null; // Force refresh
   }

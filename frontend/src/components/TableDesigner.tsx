@@ -97,6 +97,7 @@ const TableDesigner: React.FC<TableDesignerProps> = ({ onSave, initialData }) =>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase w-24">Length</th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase text-center w-20">Null</th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase text-center w-20">PK</th>
+                <th className="p-3 text-xs font-bold text-slate-500 uppercase text-center w-20">Auto</th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase w-16"></th>
               </tr>
             </thead>
@@ -143,11 +144,20 @@ const TableDesigner: React.FC<TableDesignerProps> = ({ onSave, initialData }) =>
                     />
                   </td>
                   <td className="p-2 text-center">
-                    <input 
-                      type="checkbox" 
-                      checked={col.isPrimaryKey} 
+                    <input
+                      type="checkbox"
+                      checked={col.isPrimaryKey}
                       onChange={(e) => updateColumn(col.id, 'isPrimaryKey', e.target.checked)}
                       className="rounded text-yellow-500 focus:ring-yellow-500 bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600"
+                    />
+                  </td>
+                  <td className="p-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={col.autoIncrement || false}
+                      onChange={(e) => updateColumn(col.id, 'autoIncrement', e.target.checked)}
+                      disabled={col.type !== 'INT'}
+                      className="rounded text-green-500 focus:ring-green-500 bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600 disabled:opacity-30"
                     />
                   </td>
                   <td className="p-2 text-center opacity-0 group-hover:opacity-100 transition-opacity">

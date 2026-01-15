@@ -15,6 +15,7 @@ class ColumnSchema(BaseModel):
     isPrimaryKey: bool = False
     isUnique: Optional[bool] = None
     isForeignKey: Optional[bool] = None
+    autoIncrement: Optional[bool] = None
     references: Optional[Dict[str, str]] = None
 
 

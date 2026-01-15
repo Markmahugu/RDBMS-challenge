@@ -10,6 +10,7 @@ export interface ColumnSchema {
   isPrimaryKey: boolean;
   isUnique?: boolean;
   isForeignKey?: boolean;
+  autoIncrement?: boolean;
   references?: {
     tableId: string;
     columnId: string;

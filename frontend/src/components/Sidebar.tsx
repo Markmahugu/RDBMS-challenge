@@ -1,27 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Database, Table as TableIcon, ChevronRight, ChevronDown, MoreVertical, Plus, Key, Hash, Search, GitGraph, FileCode, Trash2, Eye, Pencil } from 'lucide-react';
+import { Database, Table as TableIcon, ChevronRight, ChevronDown, MoreVertical, Plus, Key, Hash, Search, GitGraph, FileCode, Trash2, Eye, Pencil, Edit } from 'lucide-react';
 import { DatabaseState, TableSchema } from '../types';
 
 interface SidebarProps {
   dbState: DatabaseState;
+  databases: string[];
   onSelectTable: (tableName: string) => void;
   onDropTable: (tableName: string) => void;
   onCreateTable: () => void;
   onCreateDatabase: () => void;
+  onSwitchDatabase: (dbName: string) => void;
   onOpenSchema: () => void;
   onScriptTable: (tableName: string) => void;
   onEditTable: (tableName: string) => void;
+  onRenameTable: (tableName: string) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ 
-  dbState, 
-  onSelectTable, 
-  onDropTable, 
-  onCreateTable, 
+const Sidebar: React.FC<SidebarProps> = ({
+  dbState,
+  databases,
+  onSelectTable,
+  onDropTable,
+  onCreateTable,
   onCreateDatabase,
+  onSwitchDatabase,
   onOpenSchema,
   onScriptTable,
-  onEditTable
+  onEditTable,
+  onRenameTable
 }) => {
   const [expandedDb, setExpandedDb] = useState(true);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
@@ -69,8 +75,24 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 pb-24"> 
+      <div className="flex-1 overflow-y-auto p-2 pb-24">
       {/* pb-24 to allow space for dropdown at bottom */}
+        {/* Database Selector */}
+        {databases.length > 1 && (
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Switch Database</label>
+            <select
+              value={dbState.name}
+              onChange={(e) => onSwitchDatabase(e.target.value)}
+              className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200"
+            >
+              {databases.map(db => (
+                <option key={db} value={db}>{db}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="mb-2">
           <div className="flex items-center justify-between p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded group transition-colors">
              <div 
@@ -139,11 +161,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                             >
                                 <FileCode className="h-3 w-3" /> Script SELECT
                             </button>
-                            <button 
+                            <button
                                 onClick={() => { onEditTable(table.name); setActiveMenu(null); }}
                                 className="flex items-center gap-2 w-full text-left px-4 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                             >
                                 <Pencil className="h-3 w-3" /> Edit Structure
+                            </button>
+                            <button
+                                onClick={() => { onRenameTable(table.name); setActiveMenu(null); }}
+                                className="flex items-center gap-2 w-full text-left px-4 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                            >
+                                <Edit className="h-3 w-3" /> Rename Table
                             </button>
                             <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
                             <button 
