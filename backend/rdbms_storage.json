@@ -1,6 +1,6 @@
 {
-    "DemoDB": {
-        "name": "DemoDB",
+    "IF": {
+        "name": "IF",
         "tables": [
             {
                 "id": "departments",
@@ -16,7 +16,7 @@
                         "isPrimaryKey": true,
                         "isUnique": null,
                         "isForeignKey": null,
-                        "autoIncrement": null,
+                        "autoIncrement": true,
                         "references": null
                     },
                     {
@@ -29,7 +29,7 @@
                         "isPrimaryKey": false,
                         "isUnique": null,
                         "isForeignKey": null,
-                        "autoIncrement": null,
+                        "autoIncrement": false,
                         "references": null
                     }
                 ],
@@ -63,7 +63,7 @@
                         "isPrimaryKey": true,
                         "isUnique": null,
                         "isForeignKey": null,
-                        "autoIncrement": null,
+                        "autoIncrement": true,
                         "references": null
                     },
                     {
@@ -76,7 +76,7 @@
                         "isPrimaryKey": false,
                         "isUnique": null,
                         "isForeignKey": null,
-                        "autoIncrement": null,
+                        "autoIncrement": false,
                         "references": null
                     },
                     {
@@ -89,7 +89,7 @@
                         "isPrimaryKey": false,
                         "isUnique": null,
                         "isForeignKey": null,
-                        "autoIncrement": null,
+                        "autoIncrement": false,
                         "references": null
                     }
                 ],
@@ -113,71 +113,6 @@
                         "emp_id": 4,
                         "first_name": "David",
                         "dept_id": null
-                    }
-                ],
-                "indexes": []
-            },
-            {
-                "id": "new_table",
-                "name": "new_table",
-                "columns": [
-                    {
-                        "id": "1",
-                        "name": "id",
-                        "type": "INT",
-                        "length": null,
-                        "nullable": false,
-                        "defaultValue": null,
-                        "isPrimaryKey": true,
-                        "isUnique": true,
-                        "isForeignKey": null,
-                        "autoIncrement": null,
-                        "references": null
-                    },
-                    {
-                        "id": "0.6768419041605814",
-                        "name": "First Name",
-                        "type": "TEXT",
-                        "length": 255,
-                        "nullable": true,
-                        "defaultValue": null,
-                        "isPrimaryKey": false,
-                        "isUnique": null,
-                        "isForeignKey": null,
-                        "autoIncrement": null,
-                        "references": null
-                    },
-                    {
-                        "id": "0.5120519069325554",
-                        "name": "Second Name",
-                        "type": "TEXT",
-                        "length": 255,
-                        "nullable": true,
-                        "defaultValue": null,
-                        "isPrimaryKey": false,
-                        "isUnique": null,
-                        "isForeignKey": null,
-                        "autoIncrement": null,
-                        "references": null
-                    },
-                    {
-                        "id": "0.7710496090362645",
-                        "name": "new_column",
-                        "type": "VARCHAR",
-                        "length": 255,
-                        "nullable": true,
-                        "defaultValue": null,
-                        "isPrimaryKey": false,
-                        "isUnique": null,
-                        "isForeignKey": null,
-                        "autoIncrement": null,
-                        "references": null
-                    }
-                ],
-                "rows": [
-                    {
-                        "First Name": "Mark",
-                        "Second Name": "Kiarie"
                     }
                 ],
                 "indexes": []

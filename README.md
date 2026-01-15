@@ -149,6 +149,26 @@ This project showcases expertise in:
 
 Built for a job interview challenge - clean, functional, and demonstrates real engineering skills! 🚀
 
+## 📄 Data Storage Explanation
+
+### `backend/rdbms_storage.json`
+
+This JSON file serves as the persistent storage mechanism for the custom RDBMS implementation. It contains the complete state of all databases, including their schemas, table structures, and data rows. The file is loaded into memory when the backend starts and is saved back to disk whenever changes are made.
+
+**Key Structure:**
+- **Databases**: Top-level object containing all databases (e.g., "DemoDB")
+- **Tables**: Each database contains an array of table objects with:
+  - `id`: Unique table identifier
+  - `name`: Human-readable table name
+  - `columns`: Array of column definitions including type, constraints, and properties
+  - `rows`: Array of data rows as key-value objects
+  - `indexes`: Index definitions for performance optimization
+
+**Example Usage:**
+The file includes a pre-populated "DemoDB" with sample tables like `departments` and `employees`, demonstrating relationships and data types. This allows users to immediately explore the system with meaningful data without manual setup.
+
+The storage format ensures data persistence across application restarts while maintaining a simple, human-readable JSON structure.
+
 
 ## Credits and Attribution
 

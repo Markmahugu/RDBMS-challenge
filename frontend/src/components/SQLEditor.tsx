@@ -10,7 +10,31 @@ interface SQLEditorProps {
 }
 
 const SQLEditor: React.FC<SQLEditorProps> = ({ initialQuery, onExecute, history }) => {
-  const [query, setQuery] = useState(initialQuery || 'SELECT * FROM employees');
+  const [query, setQuery] = useState(initialQuery || `CREATE DATABASE IF NOT EXISTS my_company;
+
+-- 1. Create the Department table
+CREATE TABLE departments (
+    dept_id INT PRIMARY KEY,
+    dept_name VARCHAR(50)
+);
+
+-- 2. Create the Employees table
+CREATE TABLE employees (
+    emp_id INT PRIMARY KEY,
+    first_name VARCHAR(50),
+    dept_id INT -- This is the 'Foreign Key' that links to the table above
+);
+
+-- 3. Insert data
+INSERT INTO departments (dept_id, dept_name)
+VALUES (101, 'Engineering'), (102, 'Marketing'), (103, 'HR');
+
+INSERT INTO employees (emp_id, first_name, dept_id)
+VALUES
+    (1, 'Alice', 101),   -- Alice is in Engineering
+    (2, 'Bob', 102),     -- Bob is in Marketing
+    (3, 'Charlie', 101), -- Charlie is in Engineering
+    (4, 'David', NULL);  -- David has no department assigned yet`);
   const [isExecuting, setIsExecuting] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -84,6 +108,34 @@ const SQLEditor: React.FC<SQLEditorProps> = ({ initialQuery, onExecute, history 
     }
   };
 
+  const handleDownloadCSV = () => {
+    if (!result || !result.success || !result.data || !result.columns) return;
+
+    const csvContent = [
+      result.columns.join(','), // Header row
+      ...result.data.map(row =>
+        result.columns!.map(col => {
+          const value = row[col];
+          // Escape commas and quotes in values
+          const stringValue = value !== null ? String(value) : '';
+          return stringValue.includes(',') || stringValue.includes('"')
+            ? `"${stringValue.replace(/"/g, '""')}"`
+            : stringValue;
+        }).join(',')
+      )
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'query_results.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900 overflow-hidden">
       {/* Toolbar */}
@@ -145,7 +197,7 @@ const SQLEditor: React.FC<SQLEditorProps> = ({ initialQuery, onExecute, history 
                     </span>
                   )}
                 </div>
-                {result.success && <button className="flex items-center gap-1 text-blue-500 hover:text-blue-600"><Download className="h-3 w-3" /> CSV</button>}
+                {result.success && <button onClick={handleDownloadCSV} className="flex items-center gap-1 text-blue-500 hover:text-blue-600"><Download className="h-3 w-3" /> CSV</button>}
               </div>
 
               {result.success ? (

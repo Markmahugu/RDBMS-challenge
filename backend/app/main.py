@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from .database import DatabaseEngine
 from .models import (
     DatabaseState, QueryResult, CreateDatabaseRequest,
@@ -60,9 +61,20 @@ async def create_database(request: CreateDatabaseRequest):
     """Create a new database"""
     try:
         db_engine.create_database(request.name)
+        db_engine.current_db_name = request.name  # Automatically select the new database
         return {"message": f"Database '{request.name}' created successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/databases/{name}")
+async def drop_database(name: str):
+    """Drop a database"""
+    try:
+        db_engine.drop_database(name)
+        return {"message": f"Database '{name}' dropped successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/databases/{name}")
@@ -143,8 +155,13 @@ async def reset_database(name: str):
     return {"message": f"Database '{name}' reset to empty state"}
 
 
+class UpdateCellRequest(BaseModel):
+    row_index: int
+    column: str
+    value: str
+
 @app.put("/databases/{name}/cells/{table_name}")
-async def update_cell(name: str, table_name: str, row_index: int, column: str, value: str):
+async def update_cell(name: str, table_name: str, request: UpdateCellRequest):
     """Update a specific cell in a table"""
     if name not in db_engine.databases:
         raise HTTPException(status_code=404, detail=f"Database '{name}' not found")
@@ -155,21 +172,21 @@ async def update_cell(name: str, table_name: str, row_index: int, column: str, v
     if not table:
         raise HTTPException(status_code=404, detail=f"Table '{table_name}' not found")
 
-    if row_index >= len(table.rows):
+    if request.row_index >= len(table.rows):
         raise HTTPException(status_code=400, detail="Row index out of bounds")
 
     # Convert value based on column type
-    col_def = next((c for c in table.columns if c.name == column), None)
-    final_value = value
+    col_def = next((c for c in table.columns if c.name == request.column), None)
+    final_value = request.value
     if col_def and col_def.type in ['INT', 'DECIMAL']:
         try:
-            final_value = int(float(value))
+            final_value = int(float(request.value))
         except ValueError:
-            final_value = value
+            final_value = request.value
 
-    table.rows[row_index][column] = final_value
+    table.rows[request.row_index][request.column] = final_value
 
-    return {"message": f"Updated {table_name} row {row_index}, column {column}"}
+    return {"message": f"Updated {table_name} row {request.row_index}, column {request.column}"}
 
 
 if __name__ == "__main__":

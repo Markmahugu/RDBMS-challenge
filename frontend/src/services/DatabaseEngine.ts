@@ -7,7 +7,19 @@ export class DatabaseAPI {
 
   constructor(baseUrl: string = 'http://localhost:8000') {
     this.baseUrl = baseUrl;
-    this.currentDbName = 'DemoDB';
+    this.currentDbName = 'DemoDB'; // Will be updated when we load databases
+  }
+
+  private async ensureCurrentDatabase(): Promise<void> {
+    try {
+      const databases = await this.listDatabases();
+      if (databases.length > 0 && !databases.includes(this.currentDbName)) {
+        this.currentDbName = databases[0];
+      }
+    } catch (error) {
+      // If we can't list databases, keep the default
+      console.warn('Could not list databases, using default:', error);
+    }
   }
 
   private async apiRequest<T>(
@@ -33,6 +45,7 @@ export class DatabaseAPI {
 
   public async getDatabaseState(forceRefresh: boolean = false): Promise<DatabaseState> {
     if (!this.dbState || forceRefresh) {
+      await this.ensureCurrentDatabase(); // Make sure we have a valid current database
       this.dbState = await this.apiRequest<DatabaseState>(`/databases/${this.currentDbName}`);
     }
     return this.dbState;
@@ -76,6 +89,20 @@ export class DatabaseAPI {
     await this.apiRequest(`/databases/${this.currentDbName}/tables/${tableName}`, {
       method: 'DELETE',
     });
+    this.dbState = null; // Force refresh
+  }
+
+  public async dropDatabase(name: string): Promise<void> {
+    await this.apiRequest(`/databases/${name}`, {
+      method: 'DELETE',
+    });
+    // If we're deleting the current database, switch to another one or refresh
+    if (name === this.currentDbName) {
+      const remainingDbs = await this.listDatabases();
+      if (remainingDbs.length > 0) {
+        this.currentDbName = remainingDbs[0];
+      }
+    }
     this.dbState = null; // Force refresh
   }
 

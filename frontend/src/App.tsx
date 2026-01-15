@@ -135,6 +135,22 @@ function App() {
       }
   };
 
+  const handleDropDatabase = async (dbName: string) => {
+      if(confirm(`Are you sure you want to drop database '${dbName}'? This action cannot be undone.`)) {
+          try {
+              await dbEngine.dropDatabase(dbName);
+              await refreshState();
+              // Reset tabs to default state for the new current database
+              setTabs([
+                { id: 'new', type: 'sql', title: 'New Query', active: true },
+                { id: 'schema', type: 'schema', title: 'Schema Diagram', active: false }
+              ]);
+          } catch (e: any) {
+              alert(e.message);
+          }
+      }
+  };
+
   const handleTogglePK = async (tableName: string, columnName: string) => {
       await dbEngine.togglePrimaryKey(tableName, columnName);
       await refreshState();
@@ -245,6 +261,7 @@ function App() {
         onScriptTable={handleScriptTable}
         onEditTable={handleEditTable}
         onRenameTable={handleRenameTable}
+        onDropDatabase={handleDropDatabase}
       />
 
       {/* Main Content */}

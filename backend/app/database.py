@@ -137,6 +137,23 @@ class DatabaseEngine:
         self.current_db_name = name
         self._save_state_to_disk()
 
+    def drop_database(self, name: str) -> None:
+        """Drops (deletes) the specified database."""
+        if name not in self.databases:
+            raise ValueError(f"Database '{name}' does not exist")
+        if name == self.current_db_name:
+            # Switch to another database if we're deleting the current one
+            remaining_dbs = [db_name for db_name in self.databases.keys() if db_name != name]
+            if remaining_dbs:
+                self.current_db_name = remaining_dbs[0]
+            else:
+                # If no databases left, create a default one
+                self.current_db_name = 'DemoDB'
+                self.reset_database()
+                return
+        del self.databases[name]
+        self._save_state_to_disk()
+
     def create_table(self, table: TableSchema) -> None:
         """Creates a new table in the current database."""
         db = self.databases[self.current_db_name]
@@ -217,6 +234,8 @@ class DatabaseEngine:
                     result = self._handle_create_database(stmt, start_time)
                 elif q.startswith('CREATE TABLE'):
                     result = self._handle_create_table(stmt, start_time)
+                elif q.startswith('DROP DATABASE'):
+                    result = self._handle_drop_database(stmt, start_time)
                 elif q.startswith('DROP TABLE'):
                     parts = stmt.split()
                     table_name = parts[2].replace(';', '').strip()
@@ -440,11 +459,93 @@ class DatabaseEngine:
         )
 
     def _handle_update(self, query: str, start_time: float) -> QueryResult:
-        """Processes UPDATE queries (currently simulated for demonstration)."""
+        """Processes UPDATE queries to modify existing rows in tables."""
+        db = self.databases[self.current_db_name]
+
+        # Parse UPDATE statement: UPDATE table SET col1=val1, col2=val2 WHERE condition
+        match = re.search(
+            r'UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$',
+            query,
+            re.IGNORECASE | re.DOTALL
+        )
+        if not match:
+            raise ValueError("Invalid UPDATE syntax")
+
+        table_name = match.group(1)
+        set_clause = match.group(2).strip()
+        where_clause = match.group(3).strip() if match.group(3) else None
+
+        table = next((t for t in db.tables if t.name == table_name), None)
+        if not table:
+            raise ValueError(f"Table '{table_name}' not found")
+
+        # Parse SET clause: col1=val1, col2=val2
+        set_parts = [part.strip() for part in set_clause.split(',')]
+        updates = {}
+        for part in set_parts:
+            if '=' not in part:
+                raise ValueError(f"Invalid SET clause: {part}")
+            col, val = part.split('=', 1)
+            col = col.strip()
+            val = val.strip().strip("'\"")
+
+            # Verify column exists
+            if not any(c.name == col for c in table.columns):
+                raise ValueError(f"Column '{col}' not found in table '{table_name}'")
+
+            # Handle NULL values
+            if val.upper() == 'NULL':
+                updates[col] = None
+            else:
+                # Convert types
+                col_def = next((c for c in table.columns if c.name == col), None)
+                if col_def and col_def.type in ['INT', 'DECIMAL']:
+                    try:
+                        updates[col] = int(float(val))
+                    except:
+                        updates[col] = val
+                else:
+                    updates[col] = val
+
+        # Find rows to update
+        rows_to_update = []
+        if where_clause:
+            # Parse WHERE clause (simplified: only supports col = value)
+            where_match = re.search(r'(\w+)\s*=\s*([^;\s]+)', where_clause, re.IGNORECASE)
+            if not where_match:
+                raise ValueError("Unsupported WHERE clause in UPDATE")
+
+            where_col = where_match.group(1)
+            where_val = where_match.group(2).strip("'\"")
+
+            # Convert where value type
+            where_col_def = next((c for c in table.columns if c.name == where_col), None)
+            if where_col_def and where_col_def.type in ['INT', 'DECIMAL']:
+                try:
+                    where_val = int(float(where_val))
+                except:
+                    pass
+
+            # Find matching rows
+            for i, row in enumerate(table.rows):
+                if str(row.get(where_col, '')) == str(where_val):
+                    rows_to_update.append(i)
+        else:
+            # Update all rows if no WHERE clause
+            rows_to_update = list(range(len(table.rows)))
+
+        # Apply updates
+        updated_count = 0
+        for row_index in rows_to_update:
+            for col, val in updates.items():
+                table.rows[row_index][col] = val
+            updated_count += 1
+
+        self._save_state_to_disk()
         return QueryResult(
             success=True,
-            message="UPDATE simulated (0 rows affected)",
-            affectedRows=0,
+            message=f"{updated_count} row(s) updated",
+            affectedRows=updated_count,
             executionTime=time.time() - start_time
         )
 
@@ -495,6 +596,21 @@ class DatabaseEngine:
             executionTime=time.time() - start_time
         )
 
+    def _handle_drop_database(self, query: str, start_time: float) -> QueryResult:
+        """Processes DROP DATABASE queries."""
+        match = re.search(r'DROP\s+DATABASE\s+(\w+)', query, re.IGNORECASE)
+        if not match:
+            raise ValueError("Invalid DROP DATABASE syntax")
+
+        db_name = match.group(1)
+        self.drop_database(db_name)
+
+        return QueryResult(
+            success=True,
+            message=f"Database '{db_name}' dropped successfully",
+            executionTime=time.time() - start_time
+        )
+
     def _handle_create_table(self, query: str, start_time: float) -> QueryResult:
         """Processes CREATE TABLE queries."""
         # Parse table name
@@ -541,6 +657,9 @@ class DatabaseEngine:
             is_primary_key = 'PRIMARY KEY' in col_def.upper()
             nullable = not is_primary_key  # Primary keys are typically not nullable
 
+            # Auto-increment for INT primary keys only
+            auto_increment = is_primary_key and col_type == 'INT'
+
             # Create column schema
             column = ColumnSchema(
                 id=f"{table_name}_col_{i}",
@@ -548,7 +667,8 @@ class DatabaseEngine:
                 type=col_type,
                 length=length,
                 nullable=nullable,
-                isPrimaryKey=is_primary_key
+                isPrimaryKey=is_primary_key,
+                autoIncrement=auto_increment
             )
             columns.append(column)
 

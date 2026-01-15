@@ -14,6 +14,7 @@ interface SidebarProps {
   onScriptTable: (tableName: string) => void;
   onEditTable: (tableName: string) => void;
   onRenameTable: (tableName: string) => void;
+  onDropDatabase: (dbName: string) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -27,7 +28,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onOpenSchema,
   onScriptTable,
   onEditTable,
-  onRenameTable
+  onRenameTable,
+  onDropDatabase
 }) => {
   const [expandedDb, setExpandedDb] = useState(true);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
@@ -95,7 +97,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="mb-2">
           <div className="flex items-center justify-between p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded group transition-colors">
-             <div 
+             <div
                 className="flex items-center cursor-pointer text-blue-600 dark:text-blue-400 font-semibold flex-1 overflow-hidden"
                 onClick={() => setExpandedDb(!expandedDb)}
              >
@@ -103,13 +105,22 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Database className="h-4 w-4 mr-2 shrink-0" />
                 <span className="truncate">{dbState.name}</span>
              </div>
-             <button 
-                onClick={(e) => { e.stopPropagation(); onOpenSchema(); }}
-                className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                title="View Schema Diagram"
-             >
-                <GitGraph className="h-3.5 w-3.5" />
-             </button>
+             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+               <button
+                  onClick={(e) => { e.stopPropagation(); onOpenSchema(); }}
+                  className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                  title="View Schema Diagram"
+               >
+                  <GitGraph className="h-3.5 w-3.5" />
+               </button>
+               <button
+                  onClick={(e) => { e.stopPropagation(); onDropDatabase(dbState.name); }}
+                  className="p-1 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                  title="Drop Database"
+               >
+                  <Trash2 className="h-3.5 w-3.5" />
+               </button>
+             </div>
           </div>
 
           {expandedDb && (
