@@ -583,11 +583,27 @@ class DatabaseEngine:
 
     def _handle_create_database(self, query: str, start_time: float) -> QueryResult:
         """Processes CREATE DATABASE queries."""
-        match = re.search(r'CREATE\s+DATABASE\s+(\w+)', query, re.IGNORECASE)
+        # Check if IF NOT EXISTS is present
+        has_if_not_exists = 'IF NOT EXISTS' in query.upper()
+
+        match = re.search(r'CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)', query, re.IGNORECASE)
         if not match:
             raise ValueError("Invalid CREATE DATABASE syntax")
 
         db_name = match.group(1)
+
+        # If database already exists and IF NOT EXISTS is specified, succeed silently and switch to it
+        if db_name in self.databases:
+            if has_if_not_exists:
+                self.current_db_name = db_name  # Switch to the existing database
+                return QueryResult(
+                    success=True,
+                    message=f"Database '{db_name}' already exists",
+                    executionTime=time.time() - start_time
+                )
+            else:
+                raise ValueError(f"Database '{db_name}' already exists")
+
         self.create_database(db_name)
 
         return QueryResult(

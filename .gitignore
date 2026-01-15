@@ -117,6 +117,7 @@ jspm_packages/
 *.db
 *.sqlite
 *.sqlite3
+rdbms_storage.json
 
 # Temporary files
 *.tmp

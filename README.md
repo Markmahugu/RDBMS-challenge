@@ -36,13 +36,13 @@ The challenge was to create something functional yet educational, showing real d
 ![Database Explorer Main Interface](DB_Explorer.png)
 
 ### SQL Query Editor
-![SQL Query Interface](DB_Explorer_2.png)
+![SQL Query Interface](DB_Explorer_3.png)
 
 ### Table Schema Designer
-![Table Design Interface](DB_Explorer_3.png)
+![Table Design Interface](DB_Explorer_4.png)
 
 ### Schema Visualization
-![Database Schema Diagram](DB_Explorer_4.png)
+![Database Schema Diagram](DB_Explorer_2.png)
 
 ## 🚀 Getting Started
 
