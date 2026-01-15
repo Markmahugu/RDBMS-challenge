@@ -5,14 +5,15 @@ import TableDesigner from './components/TableDesigner';
 import SchemaVisualizer from './components/SchemaVisualizer';
 import TableDataViewer from './components/TableDataViewer';
 import RecruiterInfoModal from './components/RecruiterInfoModal';
-import { MockDatabase } from './services/DatabaseEngine';
+import { DatabaseAPI } from './services/DatabaseEngine';
 import { DatabaseState, TabItem } from './types';
 import { X, Code2, PenTool, GitGraph, Database as DbIcon, Sun, Moon, Table as TableIcon } from 'lucide-react';
 
-const dbEngine = new MockDatabase();
+const dbEngine = new DatabaseAPI();
 
 function App() {
-  const [dbState, setDbState] = useState<DatabaseState>(dbEngine.getDatabaseState());
+  const [dbState, setDbState] = useState<DatabaseState | null>(null);
+  const [loading, setLoading] = useState(true);
   const [tabs, setTabs] = useState<TabItem[]>([
     { id: '1', type: 'sql', title: 'SQL Query 1', active: true },
     { id: '2', type: 'schema', title: 'Schema Diagram', active: false }
@@ -20,6 +21,21 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [queryHistory, setQueryHistory] = useState<string[]>([]);
   const [showRecruiterInfo, setShowRecruiterInfo] = useState(false);
+
+  // Load initial database state
+  useEffect(() => {
+    const loadInitialState = async () => {
+      try {
+        const state = await dbEngine.getDatabaseState();
+        setDbState(state);
+        setLoading(false);
+      } catch (error) {
+        console.error('Failed to load database state:', error);
+        setLoading(false);
+      }
+    };
+    loadInitialState();
+  }, []);
 
   // Apply dark mode class to html
   useEffect(() => {
@@ -30,13 +46,17 @@ function App() {
     }
   }, [isDarkMode]);
 
-  const refreshState = () => {
-      const state = dbEngine.getDatabaseState();
-      // Ensure we trigger a re-render by creating a new reference for the tables array
-      setDbState({ 
-          name: state.name,
-          tables: [...state.tables] 
-      });
+  const refreshState = async () => {
+      try {
+        const state = await dbEngine.getDatabaseState();
+        // Ensure we trigger a re-render by creating a new reference for the tables array
+        setDbState({
+            name: state.name,
+            tables: [...state.tables]
+        });
+      } catch (error) {
+        console.error('Failed to refresh database state:', error);
+      }
   };
 
   const activeTab = tabs.find(t => t.active);
@@ -74,14 +94,14 @@ function App() {
       return result;
   };
 
-  const handleSaveTable = (tableSchema: any, oldName?: string) => {
+  const handleSaveTable = async (tableSchema: any, oldName?: string) => {
       try {
           if (oldName) {
-            dbEngine.updateTable(oldName, tableSchema);
+            await dbEngine.updateTable(oldName, tableSchema);
           } else {
-            dbEngine.createTable(tableSchema);
+            await dbEngine.createTable(tableSchema);
           }
-          refreshState();
+          await refreshState();
           // Switch to query to verify
           addTab('sql', 'Query', `SELECT * FROM ${tableSchema.name}`);
       } catch (e: any) {
@@ -92,21 +112,21 @@ function App() {
   const handleDropTable = async (tableName: string) => {
       if(confirm(`Are you sure you want to drop table '${tableName}'?`)) {
           await dbEngine.executeSQL(`DROP TABLE ${tableName}`);
-          refreshState();
+          await refreshState();
       }
   };
 
-  const handleTogglePK = (tableName: string, columnName: string) => {
-      dbEngine.togglePrimaryKey(tableName, columnName);
-      refreshState();
+  const handleTogglePK = async (tableName: string, columnName: string) => {
+      await dbEngine.togglePrimaryKey(tableName, columnName);
+      await refreshState();
   };
 
-  const handleCreateDatabase = () => {
+  const handleCreateDatabase = async () => {
     const name = prompt("Enter new database name:");
     if (name) {
       try {
-        dbEngine.createDatabase(name);
-        refreshState();
+        await dbEngine.createDatabase(name);
+        await refreshState();
         setTabs([{ id: 'new', type: 'sql', title: 'New Query', active: true }]); // Reset tabs for new DB
       } catch (e: any) {
         alert(e.message);
@@ -133,9 +153,9 @@ function App() {
       addTab('sql', `Select ${tableName}`, `SELECT * FROM ${tableName} LIMIT 1000;`);
   };
 
-  const handleResetDemo = () => {
-      dbEngine.resetDatabase();
-      refreshState();
+  const handleResetDemo = async () => {
+      await dbEngine.resetDatabase();
+      await refreshState();
       // Reset tabs to default state
       setTabs([
         { id: '1', type: 'sql', title: 'SQL Query 1', active: true },
@@ -143,17 +163,43 @@ function App() {
       ]);
   };
 
+  if (loading) {
+    return (
+      <div className="flex h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 items-center justify-center">
+        <div className="text-center">
+          <div className="bg-slate-100 dark:bg-slate-800 p-4 rounded-full mb-4">
+            <DbIcon className="h-8 w-8 text-blue-500 animate-pulse" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400">Loading database...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!dbState) {
+    return (
+      <div className="flex h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 items-center justify-center">
+        <div className="text-center">
+          <div className="bg-red-100 dark:bg-red-900/20 p-4 rounded-full mb-4">
+            <DbIcon className="h-8 w-8 text-red-500" />
+          </div>
+          <p className="text-red-600 dark:text-red-400">Failed to load database. Please check the backend server.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200">
-      <RecruiterInfoModal 
-        isOpen={showRecruiterInfo} 
-        onClose={() => setShowRecruiterInfo(false)} 
+      <RecruiterInfoModal
+        isOpen={showRecruiterInfo}
+        onClose={() => setShowRecruiterInfo(false)}
         onResetDemo={handleResetDemo}
       />
 
       {/* Sidebar */}
-      <Sidebar 
-        dbState={dbState} 
+      <Sidebar
+        dbState={dbState}
         onSelectTable={(name) => addTab('table-data', name, name)}
         onDropTable={handleDropTable}
         onCreateTable={() => addTab('designer', 'New Table')}
