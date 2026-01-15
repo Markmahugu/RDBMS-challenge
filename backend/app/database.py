@@ -14,7 +14,7 @@ class DatabaseEngine:
         self.reset_database()
 
     def _clean_sql_query(self, query: str) -> str:
-        """Remove SQL comments from query"""
+        """Removes SQL comments and normalizes whitespace in the query string."""
         # Remove single-line comments (--)
         query = re.sub(r'--.*', '', query)
         # Remove multi-line comments (/* */)
@@ -24,7 +24,7 @@ class DatabaseEngine:
         return '\n'.join(lines)
 
     def reset_database(self) -> None:
-        """Reset to empty database"""
+        """Resets the database to an empty state."""
         self.databases = {
             'DemoDB': DatabaseState(
                 name='DemoDB',
@@ -33,7 +33,7 @@ class DatabaseEngine:
         }
 
     def _seed_demo_data(self, db_name: str) -> None:
-        """Create demo tables with sample data"""
+        """Creates demonstration tables populated with sample data for testing purposes."""
         db = self.databases[db_name]
 
         # Departments table
@@ -96,25 +96,25 @@ class DatabaseEngine:
         db.tables = [dept_table, emp_table, proj_table]
 
     def get_database_state(self) -> DatabaseState:
-        """Get current database state"""
+        """Retrieves the current state of the database."""
         return self.databases[self.current_db_name]
 
     def create_database(self, name: str) -> None:
-        """Create a new database"""
+        """Creates a new database with the specified name."""
         if name in self.databases:
             raise ValueError(f"Database '{name}' already exists")
         self.databases[name] = DatabaseState(name=name, tables=[])
         self.current_db_name = name
 
     def create_table(self, table: TableSchema) -> None:
-        """Create a new table"""
+        """Creates a new table in the current database."""
         db = self.databases[self.current_db_name]
         if any(t.name == table.name for t in db.tables):
             raise ValueError(f"Table '{table.name}' already exists")
         db.tables.append(table)
 
     def update_table(self, old_name: str, new_table: TableSchema) -> None:
-        """Update an existing table schema and migrate data"""
+        """Updates an existing table schema and migrates existing data accordingly."""
         db = self.databases[self.current_db_name]
         table_index = next((i for i, t in enumerate(db.tables) if t.name == old_name), -1)
 
@@ -148,12 +148,12 @@ class DatabaseEngine:
         db.tables[table_index] = new_table
 
     def drop_table(self, table_name: str) -> None:
-        """Drop a table"""
+        """Removes the specified table from the current database."""
         db = self.databases[self.current_db_name]
         db.tables = [t for t in db.tables if t.name != table_name]
 
     def execute_sql(self, query: str) -> QueryResult:
-        """Execute SQL query"""
+        """Executes the provided SQL query and returns the result."""
         start_time = time.time()
 
         try:
@@ -225,7 +225,7 @@ class DatabaseEngine:
             )
 
     def _handle_select(self, query: str, start_time: float) -> QueryResult:
-        """Handle SELECT queries"""
+        """Processes SELECT queries, including joins, filters, and limits."""
         db = self.databases[self.current_db_name]
 
         # Parse FROM clause
@@ -339,7 +339,7 @@ class DatabaseEngine:
         )
 
     def _handle_insert(self, query: str, start_time: float) -> QueryResult:
-        """Handle INSERT queries"""
+        """Processes INSERT queries to add new rows to tables."""
         db = self.databases[self.current_db_name]
 
         # Parse INSERT statement - handle multiple rows
@@ -405,7 +405,7 @@ class DatabaseEngine:
         )
 
     def _handle_update(self, query: str, start_time: float) -> QueryResult:
-        """Handle UPDATE queries (simplified)"""
+        """Processes UPDATE queries (currently simulated for demonstration)."""
         return QueryResult(
             success=True,
             message="UPDATE simulated (0 rows affected)",
@@ -414,7 +414,7 @@ class DatabaseEngine:
         )
 
     def _handle_delete(self, query: str, start_time: float) -> QueryResult:
-        """Handle DELETE queries"""
+        """Processes DELETE queries to remove rows from tables."""
         db = self.databases[self.current_db_name]
 
         match = re.search(r'DELETE\s+FROM\s+(\w+)', query, re.IGNORECASE)
@@ -445,7 +445,7 @@ class DatabaseEngine:
         )
 
     def _handle_create_database(self, query: str, start_time: float) -> QueryResult:
-        """Handle CREATE DATABASE queries"""
+        """Processes CREATE DATABASE queries."""
         match = re.search(r'CREATE\s+DATABASE\s+(\w+)', query, re.IGNORECASE)
         if not match:
             raise ValueError("Invalid CREATE DATABASE syntax")
@@ -460,7 +460,7 @@ class DatabaseEngine:
         )
 
     def _handle_create_table(self, query: str, start_time: float) -> QueryResult:
-        """Handle CREATE TABLE queries"""
+        """Processes CREATE TABLE queries."""
         # Parse table name
         table_match = re.search(r'CREATE\s+TABLE\s+(\w+)\s*\(', query, re.IGNORECASE)
         if not table_match:
