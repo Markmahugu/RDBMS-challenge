@@ -5,7 +5,7 @@ export class DatabaseAPI {
   private currentDbName: string;
   private dbState: DatabaseState | null = null;
 
-  constructor(baseUrl: string = 'http://localhost:8000') {
+  constructor(baseUrl: string = 'http://localhost:8001') {
     this.baseUrl = baseUrl;
     this.currentDbName = 'DemoDB'; // Will be updated when we load databases
   }

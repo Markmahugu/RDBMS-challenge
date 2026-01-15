@@ -10,31 +10,7 @@ interface SQLEditorProps {
 }
 
 const SQLEditor: React.FC<SQLEditorProps> = ({ initialQuery, onExecute, history }) => {
-  const [query, setQuery] = useState(initialQuery || `CREATE DATABASE IF NOT EXISTS my_company;
-
--- 1. Create the Department table
-CREATE TABLE departments (
-    dept_id INT PRIMARY KEY,
-    dept_name VARCHAR(50)
-);
-
--- 2. Create the Employees table
-CREATE TABLE employees (
-    emp_id INT PRIMARY KEY,
-    first_name VARCHAR(50),
-    dept_id INT -- This is the 'Foreign Key' that links to the table above
-);
-
--- 3. Insert data
-INSERT INTO departments (dept_id, dept_name)
-VALUES (101, 'Engineering'), (102, 'Marketing'), (103, 'HR');
-
-INSERT INTO employees (emp_id, first_name, dept_id)
-VALUES
-    (1, 'Alice', 101),   -- Alice is in Engineering
-    (2, 'Bob', 102),     -- Bob is in Marketing
-    (3, 'Charlie', 101), -- Charlie is in Engineering
-    (4, 'David', NULL);  -- David has no department assigned yet`);
+  const [query, setQuery] = useState(initialQuery || '');
   const [isExecuting, setIsExecuting] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);

@@ -36,11 +36,57 @@ class DatabaseEngine:
         }
         self._save_state_to_disk()
 
+    def _initialize_default_database(self) -> None:
+        """Creates the default my_company database with departments and employees tables."""
+        # Create the database
+        self.databases = {
+            'my_company': DatabaseState(
+                name='my_company',
+                tables=[]
+            )
+        }
+
+        # Get the database
+        db = self.databases['my_company']
+
+        # Departments table
+        dept_table = TableSchema(
+            id='departments',
+            name='departments',
+            columns=[
+                ColumnSchema(id='dept_id', name='dept_id', type='INT', nullable=False, isPrimaryKey=True, autoIncrement=True),
+                ColumnSchema(id='dept_name', name='dept_name', type='VARCHAR', length=50, nullable=False)
+            ],
+            indexes=[],
+            rows=[
+                {'dept_id': 101, 'dept_name': 'Engineering'},
+                {'dept_id': 102, 'dept_name': 'Marketing'},
+                {'dept_id': 103, 'dept_name': 'HR'}
+            ]
+        )
+
+        # Employees table - with correct column names to match user's queries
+        emp_table = TableSchema(
+            id='employees',
+            name='employees',
+            columns=[
+                ColumnSchema(id='emp_id', name='id', type='INT', nullable=False, isPrimaryKey=True, autoIncrement=True),
+                ColumnSchema(id='emp_name', name='name', type='VARCHAR', length=50, nullable=False),
+                ColumnSchema(id='emp_role', name='role', type='VARCHAR', length=50, nullable=False),
+                ColumnSchema(id='emp_dept_id', name='department_id', type='INT', nullable=True),
+                ColumnSchema(id='emp_salary', name='salary', type='DECIMAL', nullable=False)
+            ],
+            indexes=[],
+            rows=[]
+        )
+
+        db.tables = [dept_table, emp_table]
+        self._save_state_to_disk()
+
     def _load_state_from_disk(self) -> None:
         """Loads the entire database state from the JSON storage file."""
         if not os.path.exists(self.storage_path):
-            self.current_db_name = 'DemoDB'
-            self.reset_database()
+            self._initialize_default_database()
             return
 
         try:
@@ -50,11 +96,9 @@ class DatabaseEngine:
             if self.databases:
                 self.current_db_name = list(self.databases.keys())[0]
             else:
-                self.current_db_name = 'DemoDB'
-                self.reset_database()
+                self._initialize_default_database()
         except (json.JSONDecodeError, TypeError):
-            self.current_db_name = 'DemoDB'
-            self.reset_database()
+            self._initialize_default_database()
 
     def _save_state_to_disk(self) -> None:
         """Serializes the entire database state and writes it to the JSON file."""
