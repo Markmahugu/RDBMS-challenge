@@ -134,3 +134,11 @@ This project showcases expertise in:
 - **Problem Solving**: Implementing database concepts without external dependencies
 
 Built for a job interview challenge - clean, functional, and demonstrates real engineering skills! 🚀
+
+
+## Credits and Attribution
+
+This project was developed with the assistance of AI, guided by professional prompting with programming principles and best practices in mind.
+
+*   **Frontend:** The user interface and frontend components were developed with the help of Google's AI model **Gemini 3 Flash Preview**, accessed via Google AI Studio.
+*   **Backend:** The backend logic was manually coded with the assistance of the AI model **`X-ai/grok-code-fast-1`** in my VS Code IDE.

@@ -1,5 +1,7 @@
 import time
 import re
+import os
+import json
 from typing import Dict, List, Any, Optional
 from .models import (
     DatabaseState, TableSchema, ColumnSchema, QueryResult,
@@ -9,9 +11,10 @@ from .models import (
 
 class DatabaseEngine:
     def __init__(self):
+        self.storage_path = 'rdbms_storage.json'
         self.databases: Dict[str, DatabaseState] = {}
-        self.current_db_name: str = 'DemoDB'
-        self.reset_database()
+        self.current_db_name: Optional[str] = None
+        self._load_state_from_disk()
 
     def _clean_sql_query(self, query: str) -> str:
         """Removes SQL comments and normalizes whitespace in the query string."""
@@ -31,6 +34,33 @@ class DatabaseEngine:
                 tables=[]
             )
         }
+        self._save_state_to_disk()
+
+    def _load_state_from_disk(self) -> None:
+        """Loads the entire database state from the JSON storage file."""
+        if not os.path.exists(self.storage_path):
+            self.current_db_name = 'DemoDB'
+            self.reset_database()
+            return
+
+        try:
+            with open(self.storage_path, 'r') as f:
+                data = json.load(f)
+            self.databases = {name: DatabaseState(**db_data) for name, db_data in data.items()}
+            if self.databases:
+                self.current_db_name = list(self.databases.keys())[0]
+            else:
+                self.current_db_name = 'DemoDB'
+                self.reset_database()
+        except (json.JSONDecodeError, TypeError):
+            self.current_db_name = 'DemoDB'
+            self.reset_database()
+
+    def _save_state_to_disk(self) -> None:
+        """Serializes the entire database state and writes it to the JSON file."""
+        serializable_data = {name: db.model_dump() for name, db in self.databases.items()}
+        with open(self.storage_path, 'w') as f:
+            json.dump(serializable_data, f, indent=4)
 
     def _seed_demo_data(self, db_name: str) -> None:
         """Creates demonstration tables populated with sample data for testing purposes."""
@@ -105,6 +135,7 @@ class DatabaseEngine:
             raise ValueError(f"Database '{name}' already exists")
         self.databases[name] = DatabaseState(name=name, tables=[])
         self.current_db_name = name
+        self._save_state_to_disk()
 
     def create_table(self, table: TableSchema) -> None:
         """Creates a new table in the current database."""
@@ -112,6 +143,7 @@ class DatabaseEngine:
         if any(t.name == table.name for t in db.tables):
             raise ValueError(f"Table '{table.name}' already exists")
         db.tables.append(table)
+        self._save_state_to_disk()
 
     def update_table(self, old_name: str, new_table: TableSchema) -> None:
         """Updates an existing table schema and migrates existing data accordingly."""
@@ -146,11 +178,13 @@ class DatabaseEngine:
 
         new_table.rows = new_rows
         db.tables[table_index] = new_table
+        self._save_state_to_disk()
 
     def drop_table(self, table_name: str) -> None:
         """Removes the specified table from the current database."""
         db = self.databases[self.current_db_name]
         db.tables = [t for t in db.tables if t.name != table_name]
+        self._save_state_to_disk()
 
     def execute_sql(self, query: str) -> QueryResult:
         """Executes the provided SQL query and returns the result."""
@@ -397,6 +431,7 @@ class DatabaseEngine:
             table.rows.append(new_row)
             rows_inserted += 1
 
+        self._save_state_to_disk()
         return QueryResult(
             success=True,
             message=f"{rows_inserted} row(s) inserted",
@@ -437,6 +472,7 @@ class DatabaseEngine:
         else:
             table.rows = []
 
+        self._save_state_to_disk()
         return QueryResult(
             success=True,
             message=f"{original_count - len(table.rows)} rows deleted",
