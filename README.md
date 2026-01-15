@@ -30,6 +30,20 @@ The challenge was to create something functional yet educational, showing real d
 
 **Demo**: Pre-loaded with departments, employees, and projects tables to showcase relationships and queries.
 
+## 📸 Screenshots
+
+### Main Interface
+![Database Explorer Main Interface](DB_Explorer.png)
+
+### SQL Query Editor
+![SQL Query Interface](DB_Explorer_2.png)
+
+### Table Schema Designer
+![Table Design Interface](DB_Explorer_3.png)
+
+### Schema Visualization
+![Database Schema Diagram](DB_Explorer_4.png)
+
 ## 🚀 Getting Started
 
 **Prerequisites**: Python 3.11+, Node.js 18+
