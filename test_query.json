@@ -1,0 +1,3 @@
+{
+  "query": "-- 1. Create the Department table\nCREATE TABLE departments (\n    dept_id INT PRIMARY KEY,\n    dept_name VARCHAR(50)\n);\n\n-- 2. Create the Employees table\nCREATE TABLE employees (\n    emp_id INT PRIMARY KEY,\n    first_name VARCHAR(50),\n    dept_id INT -- This is the 'Foreign Key' that links to the table above\n);\n\n-- 3. Insert data\nINSERT INTO departments (dept_id, dept_name)\nVALUES (101, 'Engineering'), (102, 'Marketing'), (103, 'HR');\n\nINSERT INTO employees (emp_id, first_name, dept_id)\nVALUES \n    (1, 'Alice', 101),   -- Alice is in Engineering\n    (2, 'Bob', 102),     -- Bob is in Marketing\n    (3, 'Charlie', 101), -- Charlie is in Engineering\n    (4, 'David', NULL);  -- David has no department assigned yet"
+}

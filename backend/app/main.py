@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from database import DatabaseEngine
-from models import (
+from .database import DatabaseEngine
+from .models import (
     DatabaseState, QueryResult, CreateDatabaseRequest,
     CreateTableRequest, UpdateTableRequest, ExecuteSQLRequest
 )
@@ -24,7 +24,29 @@ db_engine = DatabaseEngine()
 @app.get("/")
 async def root():
     """API root endpoint"""
-    return {"message": "WebRDBMS API", "version": "1.0.0"}
+    suggested_query = """
+-- Welcome to WebRDBMS! Here's a suggested query to get you started:
+-- This will create a sample database with tables for you to explore.
+-- Copy and paste this into the SQL editor and run it.
+
+CREATE DATABASE sample_db;
+
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    name VARCHAR(100),
+    email VARCHAR(100)
+);
+
+INSERT INTO users (id, name, email) VALUES (1, 'John Doe', 'john@example.com');
+INSERT INTO users (id, name, email) VALUES (2, 'Jane Smith', 'jane@example.com');
+
+-- Or create your own database and tables!
+    """.strip()
+    return {
+        "message": "WebRDBMS API",
+        "version": "1.0.0",
+        "suggestedQuery": suggested_query
+    }
 
 
 @app.get("/databases")
@@ -112,13 +134,13 @@ async def execute_query(name: str, request: ExecuteSQLRequest) -> QueryResult:
 
 @app.post("/databases/{name}/reset")
 async def reset_database(name: str):
-    """Reset database to demo data"""
+    """Reset database to empty state"""
     if name not in db_engine.databases:
         raise HTTPException(status_code=404, detail=f"Database '{name}' not found")
 
     db_engine.current_db_name = name
     db_engine.reset_database()
-    return {"message": f"Database '{name}' reset to demo data"}
+    return {"message": f"Database '{name}' reset to empty state"}
 
 
 @app.put("/databases/{name}/cells/{table_name}")

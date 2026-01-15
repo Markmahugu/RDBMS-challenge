@@ -16,9 +16,10 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
   const [consoleHeight, setConsoleHeight] = useState(200);
   const [editingCell, setEditingCell] = useState<{rowIndex: number, colName: string} | null>(null);
   const [editValue, setEditValue] = useState("");
-  
+
   // Staging state
   const [pendingChanges, setPendingChanges] = useState<Record<string, any>>({}); // Key: "rowIndex-colName"
+  const [originalDataLength, setOriginalDataLength] = useState(0);
 
   const loadData = async () => {
     setLoading(true);
@@ -28,6 +29,7 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
       if (result.success && result.data) {
         setData(result.data);
         setColumns(result.columns || []);
+        setOriginalDataLength(result.data.length);
         setPendingChanges({}); // Clear pending on reload
         addLog('success', `Loaded ${result.data.length} rows from ${tableName}`);
       } else {
@@ -90,20 +92,36 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
       let successCount = 0;
       let errorCount = 0;
 
-      // Note: In a real app, this should probably be a batch update or transaction.
-      // Here we loop for simulation.
-      const changes = Object.entries(pendingChanges);
-      
-      for (const [key, value] of changes) {
+      // Group changes by row index
+      const changesByRow: Record<number, Record<string, any>> = {};
+      Object.entries(pendingChanges).forEach(([key, value]) => {
           const [rIndexStr, colName] = key.split('-');
           const rowIndex = parseInt(rIndexStr);
-          
+          if (!changesByRow[rowIndex]) changesByRow[rowIndex] = {};
+          changesByRow[rowIndex][colName] = value;
+      });
+
+      // Process each row
+      for (const [rowIndexStr, rowChanges] of Object.entries(changesByRow)) {
+          const rowIndex = parseInt(rowIndexStr);
+
           try {
-             // We need to find the specific row index in the backend. 
-             // Since we use array indices here, we assume data hasn't shifted in backend.
-             const result = dbEngine.updateCell(tableName, rowIndex, colName, value);
-             if (result.success) successCount++;
-             else errorCount++;
+              if (rowIndex >= originalDataLength) {
+                  // New row - INSERT
+                  const cols = Object.keys(rowChanges);
+                  const vals = Object.values(rowChanges);
+                  const query = `INSERT INTO ${tableName} (${cols.join(', ')}) VALUES (${vals.map(v => `'${v}'`).join(', ')})`;
+                  const result = await dbEngine.executeSQL(query);
+                  if (result.success) successCount++;
+                  else errorCount++;
+              } else {
+                  // Existing row - UPDATE each changed cell
+                  for (const [colName, value] of Object.entries(rowChanges)) {
+                      const result = dbEngine.updateCell(tableName, rowIndex, colName, value);
+                      if (result.success) successCount++;
+                      else errorCount++;
+                  }
+              }
           } catch(e) {
               errorCount++;
           }
@@ -112,7 +130,7 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
       // Reload data to reflect committed changes
       await loadData();
       setLoading(false);
-      
+
       if (errorCount > 0) {
           addLog('error', `Saved with errors`, `${successCount} success, ${errorCount} failed`);
       } else if (successCount > 0) {
@@ -126,6 +144,18 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
     } else if (e.key === 'Escape') {
         setEditingCell(null);
     }
+  };
+
+  const handleAddNewRow = () => {
+    const newRow: any = {};
+    columns.forEach(col => {
+      newRow[col] = null; // Start with null values
+    });
+    setData(prev => [...prev, newRow]);
+    // Auto-edit the first column of the new row
+    setTimeout(() => {
+      handleCellClick(data.length, columns[0], null);
+    }, 100);
   };
 
   const hasChanges = Object.keys(pendingChanges).length > 0;
@@ -227,7 +257,15 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
                     {data.length === 0 && !loading && (
                         <tr>
                             <td colSpan={columns.length + 1} className="p-8 text-center text-slate-400">
-                                No data found in table.
+                                <div className="space-y-3">
+                                    <div>No data found in table.</div>
+                                    <button
+                                        onClick={handleAddNewRow}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm transition-colors shadow-sm"
+                                    >
+                                        Add First Row
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     )}
