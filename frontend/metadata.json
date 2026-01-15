@@ -1,5 +1,5 @@
 {
-  "name": "WebRDBMS Simulator",
+  "name": "RDBMS Challenge",
   "description": "A fully functional frontend simulation of a Relational Database Management System with SQL execution, table design, and schema visualization.",
   "requestFramePermissions": []
 }

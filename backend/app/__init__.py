@@ -1,1 +1,1 @@
-# WebRDBMS Backend Package
+# RDBMS Challenge Backend Package

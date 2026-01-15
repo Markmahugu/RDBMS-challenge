@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "webrdbms-backend"
 version = "1.0.0"
-description = "Backend API for WebRDBMS - A relational database management system"
+description = "Backend API for RDBMS Challenge - A relational database management system"
 authors = [
     {name = "Developer", email = "developer@example.com"}
 ]

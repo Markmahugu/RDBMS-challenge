@@ -6,7 +6,7 @@ from .models import (
     CreateTableRequest, UpdateTableRequest, ExecuteSQLRequest
 )
 
-app = FastAPI(title="WebRDBMS API", version="1.0.0")
+app = FastAPI(title="RDBMS Challenge API", version="1.0.0")
 
 # CORS middleware for frontend integration
 app.add_middleware(
@@ -25,7 +25,7 @@ db_engine = DatabaseEngine()
 async def root():
     """API root endpoint"""
     suggested_query = """
--- Welcome to WebRDBMS! Here's a suggested query to get you started:
+-- Welcome to RDBMS Challenge! Here's a suggested query to get you started:
 -- This will create a sample database with tables for you to explore.
 -- Copy and paste this into the SQL editor and run it.
 
@@ -43,7 +43,7 @@ INSERT INTO users (id, name, email) VALUES (2, 'Jane Smith', 'jane@example.com')
 -- Or create your own database and tables!
     """.strip()
     return {
-        "message": "WebRDBMS API",
+        "message": "RDBMS Challenge API",
         "version": "1.0.0",
         "suggestedQuery": suggested_query
     }
