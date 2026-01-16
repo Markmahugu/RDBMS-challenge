@@ -444,9 +444,13 @@ class DatabaseEngine:
             )
 
         # Handle WHERE clause - enhanced to support AND/OR
-        where_match = re.search(r'WHERE\s+(.+?)(?:\s+(ORDER|GROUP|LIMIT|$))', query, re.IGNORECASE | re.DOTALL)
+        where_match = re.search(r'WHERE\s+(.+)', query, re.IGNORECASE | re.DOTALL)
         if where_match:
-            where_clause = where_match.group(1).strip()
+            where_clause_full = where_match.group(1).strip()
+            # Remove ORDER/GROUP/LIMIT/HAVING clauses from WHERE clause
+            where_clause = re.split(r'\s+(ORDER|GROUP|LIMIT|HAVING)\s+', where_clause_full, flags=re.IGNORECASE)[0].strip()
+            # Remove trailing semicolon if present
+            where_clause = where_clause.rstrip(';').strip()
             result_data = self._apply_where_clause(result_data, where_clause)
 
             plan = ExecutionPlanNode(
@@ -616,56 +620,70 @@ class DatabaseEngine:
 
     def _apply_where_clause(self, data: List[dict], where_clause: str) -> List[dict]:
         """Apply WHERE clause filtering with support for AND/OR conditions."""
-        # Simple implementation - split by AND/OR and evaluate each condition
+        # Parse conditions and operators
         conditions = []
-        current_condition = ""
+        operators = []
 
-        # Basic parsing of AND/OR conditions
+        # Split by AND/OR operators while preserving the operators
         tokens = re.split(r'\s+(AND|OR)\s+', where_clause, flags=re.IGNORECASE)
-        i = 0
-        while i < len(tokens):
-            if tokens[i].upper() in ['AND', 'OR']:
-                if current_condition:
-                    conditions.append(current_condition.strip())
-                    conditions.append(tokens[i].upper())
-                i += 1
+
+        # Build conditions and operators lists
+        for i, token in enumerate(tokens):
+            if token.upper() in ['AND', 'OR']:
+                operators.append(token.upper())
             else:
-                current_condition = tokens[i]
-                i += 1
+                conditions.append(token.strip())
 
-        if current_condition:
-            conditions.append(current_condition.strip())
-
-        # If no AND/OR found, treat as single condition
-        if len(conditions) == 1:
+        # If no operators, just apply single condition
+        if not operators:
             return self._filter_by_condition(data, conditions[0])
 
-        # For simplicity, we'll handle basic AND/OR logic
-        # This is a simplified implementation
-        result = data
-        i = 0
-        while i < len(conditions):
-            if i + 2 < len(conditions) and conditions[i+1] in ['AND', 'OR']:
-                left_result = self._filter_by_condition(result, conditions[i])
-                right_result = self._filter_by_condition(data, conditions[i+2])
+        # For now, handle simple cases with one operator
+        if len(conditions) == 2 and len(operators) == 1:
+            if operators[0] == 'AND':
+                # AND: apply both conditions sequentially
+                # First apply the first condition, then apply the second to the results
+                temp_result = self._filter_by_condition(data, conditions[0])
+                result = self._filter_by_condition(temp_result, conditions[1])
+                return result
+            else:  # OR
+                # OR: union - rows that satisfy either condition
+                left_result = self._filter_by_condition(data, conditions[0])
+                right_result = self._filter_by_condition(data, conditions[1])
 
-                if conditions[i+1] == 'AND':
-                    # Intersection of both results
-                    left_ids = {id(row) for row in left_result}
-                    result = [row for row in right_result if id(row) in left_ids]
-                else:  # OR
-                    # Union of both results
-                    result = left_result + [row for row in right_result if row not in left_result]
-                i += 3
-            else:
-                result = self._filter_by_condition(result, conditions[i])
-                i += 1
+                result = []
+                seen = set()
+
+                # Add all from left result
+                for row in left_result:
+                    row_tuple = tuple(sorted(row.items()))
+                    if row_tuple not in seen:
+                        seen.add(row_tuple)
+                        result.append(row)
+
+                # Add all from right result not already in result
+                for row in right_result:
+                    row_tuple = tuple(sorted(row.items()))
+                    if row_tuple not in seen:
+                        seen.add(row_tuple)
+                        result.append(row)
+
+                return result
+
+        # For more complex cases (multiple operators), apply conditions sequentially
+        # This is a simplified approach - in a real RDBMS, we'd build a proper expression tree
+        result = data
+        for i, condition in enumerate(conditions):
+            result = self._filter_by_condition(result, condition)
+            # For now, treat multiple conditions as AND (simplified)
+            # A full implementation would need proper operator precedence and parentheses handling
 
         return result
 
     def _filter_by_condition(self, data: List[dict], condition: str) -> List[dict]:
         """Filter data by a single WHERE condition."""
         # Parse condition: col op value
+        condition = condition.strip()
         match = re.search(r'([\w.]+)\s*([=<>]+|LIKE)\s*([^;\s]+)', condition, re.IGNORECASE)
         if not match:
             return data

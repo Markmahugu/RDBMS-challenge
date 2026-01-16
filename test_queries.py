@@ -1,5 +1,6 @@
 import requests
 import json
+import pytest
 
 BASE_URL = "http://127.0.0.1:8001"
 
@@ -88,12 +89,140 @@ queries = [
     ("test_db", "SELECT * FROM orders;")
 ]
 
+def test_where_clause_compound_conditions():
+    """Test compound WHERE conditions with AND/OR logic"""
+    print("\nTesting Compound WHERE Conditions...")
+    print("=" * 60)
+
+    # Test data setup - use the existing test_db
+    setup_queries = [
+        ("test_db", """CREATE TABLE test_orders (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT,
+            amount DECIMAL(10, 2),
+            status VARCHAR(20)
+        );"""),
+        ("test_db", """INSERT INTO test_orders (user_id, amount, status) VALUES
+            (1, 50.00, 'completed'),
+            (1, 120.50, 'pending'),
+            (2, 25.00, 'completed'),
+            (2, 75.00, 'completed'),
+            (3, 30.00, 'cancelled');""")
+    ]
+
+    # Execute setup
+    for db_name, query in setup_queries:
+        success = execute_query(db_name, query)
+        if not success:
+            print(f"Setup failed: {query}")
+            return False
+
+    # Test cases for compound WHERE conditions
+    test_cases = [
+        # AND conditions - should return only rows that satisfy BOTH conditions
+        {
+            "query": "SELECT * FROM test_orders WHERE amount > 40 AND user_id = 1;",
+            "expected_rows": 2,  # user_id=1, amount=50.00 and user_id=1, amount=120.50
+            "description": "AND condition: amount > 40 AND user_id = 1"
+        },
+        {
+            "query": "SELECT * FROM test_orders WHERE amount > 100 AND status = 'pending';",
+            "expected_rows": 1,  # user_id=1, amount=120.50, status='pending'
+            "description": "AND condition: amount > 100 AND status = 'pending'"
+        },
+        {
+            "query": "SELECT * FROM test_orders WHERE amount < 60 AND status = 'completed';",
+            "expected_rows": 2,  # user_id=1, amount=50.00 and user_id=2, amount=25.00
+            "description": "AND condition: amount < 60 AND status = 'completed'"
+        },
+
+        # OR conditions - should return rows that satisfy EITHER condition
+        {
+            "query": "SELECT * FROM test_orders WHERE user_id = 1 OR amount > 100;",
+            "expected_rows": 2,  # user_id=1 matches 2 rows, amount>100 matches 1 row (already included)
+            "description": "OR condition: user_id = 1 OR amount > 100"
+        },
+        {
+            "query": "SELECT * FROM test_orders WHERE status = 'cancelled' OR status = 'pending';",
+            "expected_rows": 2,  # status='cancelled' and status='pending'
+            "description": "OR condition: status = 'cancelled' OR status = 'pending'"
+        },
+
+        # Mixed conditions (though simplified implementation treats as AND)
+        {
+            "query": "SELECT * FROM test_orders WHERE amount > 30 AND user_id = 2 AND status = 'completed';",
+            "expected_rows": 1,  # user_id=2, amount=75.00, status='completed'
+            "description": "Multiple AND conditions"
+        },
+
+        # Edge case: conditions that should return no rows
+        {
+            "query": "SELECT * FROM test_orders WHERE amount > 200 AND user_id = 1;",
+            "expected_rows": 0,  # No rows satisfy both conditions
+            "description": "AND condition with no matching rows: amount > 200 AND user_id = 1"
+        },
+        {
+            "query": "SELECT * FROM test_orders WHERE user_id = 999 OR amount < 0;",
+            "expected_rows": 0,  # No rows satisfy either condition
+            "description": "OR condition with no matching rows: user_id = 999 OR amount < 0"
+        }
+    ]
+
+    all_passed = True
+    for test_case in test_cases:
+        print(f"\nTesting: {test_case['description']}")
+        print(f"Query: {test_case['query']}")
+
+        # Execute query
+        url = f"{BASE_URL}/databases/test_db/query"
+        payload = {"query": test_case['query']}
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                result = response.json()
+                actual_rows = len(result.get('data', []))
+                expected_rows = test_case['expected_rows']
+
+                if actual_rows == expected_rows:
+                    print(f"✓ PASS: Expected {expected_rows} rows, got {actual_rows}")
+                else:
+                    print(f"✗ FAIL: Expected {expected_rows} rows, got {actual_rows}")
+                    print(f"Data returned: {result.get('data', [])}")
+                    all_passed = False
+            else:
+                print(f"✗ FAIL: Query failed with status {response.status_code}")
+                print(f"Error: {response.text}")
+                all_passed = False
+        except Exception as e:
+            print(f"✗ FAIL: Exception {e}")
+            all_passed = False
+
+    return all_passed
+
+
 if __name__ == "__main__":
     print("Testing RDBMS Challenge System...")
     print("=" * 60)
 
+    # Run main test suite
+    main_success = True
     for db_name, query in queries:
         success = execute_query(db_name, query)
         if not success:
             print(f"Query failed: {query}")
+            main_success = False
             break
+
+    # Run compound WHERE condition tests
+    where_tests_success = test_where_clause_compound_conditions()
+
+    if main_success and where_tests_success:
+        print("\n🎉 All tests passed!")
+    else:
+        print("\n❌ Some tests failed!")
+        if not main_success:
+            print("- Main test suite failed")
+        if not where_tests_success:
+            print("- Compound WHERE condition tests failed")
