@@ -11,7 +11,7 @@ class ColumnSchema(BaseModel):
     type: DataType
     length: Optional[int] = None
     nullable: bool = True
-    defaultValue: Optional[str] = None
+    defaultValue: Optional[Any] = None
     isPrimaryKey: bool = False
     isUnique: Optional[bool] = None
     isForeignKey: Optional[bool] = None

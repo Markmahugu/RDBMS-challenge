@@ -7,20 +7,31 @@ interface SchemaVisualizerProps {
   dbState: DatabaseState;
   onTogglePK?: (tableName: string, columnName: string) => void;
   onEditTable?: (tableName: string) => void;
+  onCreateRelationship?: (sourceTable: string, sourceColumn: string, targetTable: string, targetColumn: string) => void;
   isDarkMode: boolean;
 }
 
-const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK, onEditTable, isDarkMode }) => {
+const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK, onEditTable, onCreateRelationship, isDarkMode }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  
+
   // Persist positions across re-renders
   const positions = useRef<Record<string, {x: number, y: number, fx?: number | null, fy?: number | null}>>({});
-  
+
   // UI State
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
   const d3Zoom = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+
+  // Drag state for relationship creation
+  const [dragState, setDragState] = useState<{
+    isDragging: boolean;
+    sourceTable: string;
+    sourceColumn: string;
+    sourceType: string;
+    startX: number;
+    startY: number;
+  } | null>(null);
 
   // Helper to calculate intersection point between line and rectangle
   const getIntersection = (source: {x: number, y: number}, target: {x: number, y: number, width: number, height: number}) => {
@@ -384,23 +395,82 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
     // Columns
     node.each(function(d: any) {
         if (d.collapsed) return;
-        
+
         const el = d3.select(this);
         const startY = -d.height/2 + headerHeight + 5;
-        
+
         d.columns.forEach((col: any, i: number) => {
             const y = startY + (i * rowHeight);
             const row = el.append("g")
                 .attr("transform", `translate(${-d.width/2}, ${y})`)
-                .style("cursor", "default");
+                .style("cursor", col.isPrimaryKey && onCreateRelationship ? "grab" : "default");
 
             // Row Highlight on hover
             row.append("rect")
                .attr("width", d.width)
                .attr("height", rowHeight)
                .attr("fill", "transparent")
-               .on("mouseenter", function() { d3.select(this).attr("fill", isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)"); })
-               .on("mouseleave", function() { d3.select(this).attr("fill", "transparent"); });
+               .on("mouseenter", function() {
+                   d3.select(this).attr("fill", isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)");
+                   if (dragState && !col.isPrimaryKey && col.type === dragState.sourceType) {
+                       d3.select(this).attr("fill", isDarkMode ? "rgba(34,197,94,0.2)" : "rgba(34,197,94,0.1)");
+                   }
+               })
+               .on("mouseleave", function() {
+                   d3.select(this).attr("fill", "transparent");
+               });
+
+            // Drag handlers for PK columns
+            if (col.isPrimaryKey && onCreateRelationship) {
+                row.call(d3.drag()
+                    .on("start", function(event) {
+                        setDragState({
+                            isDragging: true,
+                            sourceTable: d.name,
+                            sourceColumn: col.name,
+                            sourceType: col.type,
+                            startX: event.x,
+                            startY: event.y
+                        });
+                        d3.select(event.sourceEvent.target).style("cursor", "grabbing");
+                    })
+                    .on("drag", function(event) {
+                        // Visual feedback could be added here
+                    })
+                    .on("end", function(event) {
+                        if (dragState) {
+                            setDragState(null);
+                        }
+                        d3.select(event.sourceEvent.target).style("cursor", "grab");
+                    }) as any
+                );
+            }
+
+            // Drop handlers for non-PK columns
+            if (!col.isPrimaryKey && onCreateRelationship) {
+                row.on("mouseup", function(event) {
+                    if (dragState && dragState.isDragging && col.type === dragState.sourceType) {
+                        // Check if relationship already exists
+                        const existingRelationship = d.columns.some((c: any) =>
+                            c.isForeignKey && c.references &&
+                            c.references.tableId === dragState.sourceTable &&
+                            dbState.tables.find(t => t.name === dragState.sourceTable)?.columns.find(c => c.name === dragState.sourceColumn)?.id === c.references.columnId
+                        );
+
+                        if (!existingRelationship) {
+                            onCreateRelationship(
+                                dragState.sourceTable,
+                                dragState.sourceColumn,
+                                d.name,
+                                col.name
+                            );
+                        }
+                    }
+                    if (dragState) {
+                        setDragState(null);
+                    }
+                });
+            }
 
             // Icons
             if (col.isPrimaryKey) {
@@ -465,7 +535,7 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
       positions.current[d.name] = { x: d.x, y: d.y, fx: d.x, fy: d.y };
     }
 
-  }, [dbState, collapsed, isDarkMode]);
+  }, [dbState, collapsed, isDarkMode, dragState]);
 
   const toggleCollapse = (tableName: string) => {
     setCollapsed(prev => ({ ...prev, [tableName]: !prev[tableName] }));
@@ -529,6 +599,7 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
             <div className="mt-2 text-[10px] opacity-70">
                 • Scroll to Zoom<br/>
                 • Drag to Rearrange<br/>
+                • Drag PK to FK to create relationships<br/>
                 • Hover relations to highlight
             </div>
         </div>

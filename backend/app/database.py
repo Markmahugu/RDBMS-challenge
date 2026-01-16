@@ -203,6 +203,11 @@ class DatabaseEngine:
         db = self.databases[self.current_db_name]
         if any(t.name == table.name for t in db.tables):
             raise ValueError(f"Table '{table.name}' already exists")
+
+        # Validate initial rows for integrity constraints
+        for row in table.rows:
+            self._check_integrity_constraints(table, row)
+
         db.tables.append(table)
         self._save_state_to_disk()
 
@@ -238,6 +243,11 @@ class DatabaseEngine:
             new_rows.append(new_row)
 
         new_table.rows = new_rows
+
+        # Validate migrated rows for integrity constraints
+        for row in new_table.rows:
+            self._check_integrity_constraints(new_table, row)
+
         db.tables[table_index] = new_table
         self._save_state_to_disk()
 

@@ -156,6 +156,43 @@ function App() {
       await refreshState();
   };
 
+  const handleCreateRelationship = async (sourceTable: string, sourceColumn: string, targetTable: string, targetColumn: string) => {
+      try {
+          // Find the source column ID
+          const sourceTableData = dbState.tables.find(t => t.name === sourceTable);
+          const sourceCol = sourceTableData?.columns.find(c => c.name === sourceColumn);
+          if (!sourceCol) throw new Error('Source column not found');
+
+          // Find the target table and update its column
+          const targetTableData = dbState.tables.find(t => t.name === targetTable);
+          if (!targetTableData) throw new Error('Target table not found');
+
+          const updatedColumns = targetTableData.columns.map(col => {
+              if (col.name === targetColumn) {
+                  return {
+                      ...col,
+                      isForeignKey: true,
+                      references: {
+                          tableId: sourceTable,
+                          columnId: sourceCol.id
+                      }
+                  };
+              }
+              return col;
+          });
+
+          const updatedTable = {
+              ...targetTableData,
+              columns: updatedColumns
+          };
+
+          await dbEngine.updateTable(targetTable, updatedTable);
+          await refreshState();
+      } catch (error: any) {
+          alert(`Failed to create relationship: ${error.message}`);
+      }
+  };
+
   const handleCreateDatabase = async () => {
     const name = prompt("Enter new database name:");
     if (name) {
@@ -347,10 +384,11 @@ function App() {
                         />
                     )}
                     {activeTab.type === 'schema' && (
-                        <SchemaVisualizer 
-                          dbState={dbState} 
+                        <SchemaVisualizer
+                          dbState={dbState}
                           onTogglePK={handleTogglePK}
                           onEditTable={handleEditTable}
+                          onCreateRelationship={handleCreateRelationship}
                           isDarkMode={isDarkMode}
                         />
                     )}
