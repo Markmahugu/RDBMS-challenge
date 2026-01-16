@@ -33,6 +33,14 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
     startY: number;
   } | null>(null);
 
+  // Popup state for relationship creation
+  const [relationshipPopup, setRelationshipPopup] = useState<{
+    tableName: string;
+    columnName: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
   // Helper to calculate intersection point between line and rectangle
   const getIntersection = (source: {x: number, y: number}, target: {x: number, y: number, width: number, height: number}) => {
      const dx = target.x - source.x;
@@ -202,6 +210,15 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
         .attr("fill", "url(#grid)");
 
     const g = svg.append("g");
+
+    // Drag line for relationship creation
+    const dragLine = g.append("line")
+        .attr("class", "drag-line")
+        .attr("stroke", colors.linkHover)
+        .attr("stroke-width", 2)
+        .attr("stroke-dasharray", "5,5")
+        .attr("marker-end", "url(#arrow-end-active)")
+        .style("display", "none");
 
     // --- Zoom ---
     const zoom = d3.zoom<SVGSVGElement, unknown>()
@@ -424,20 +441,51 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
             if (col.isPrimaryKey && onCreateRelationship) {
                 row.call(d3.drag()
                     .on("start", function(event) {
+                        const startX = d.x + (-d.width/2) + 14; // Position at PK icon center
+                        const startY = d.y + (-d.height/2 + headerHeight + 5 + (i * rowHeight) + 12);
+
                         setDragState({
                             isDragging: true,
                             sourceTable: d.name,
                             sourceColumn: col.name,
                             sourceType: col.type,
-                            startX: event.x,
-                            startY: event.y
+                            startX: startX,
+                            startY: startY
                         });
                         d3.select(event.sourceEvent.target).style("cursor", "grabbing");
+
+                        // Show drag line
+                        dragLine
+                            .attr("x1", startX)
+                            .attr("y1", startY)
+                            .attr("x2", startX)
+                            .attr("y2", startY)
+                            .style("display", "block");
                     })
                     .on("drag", function(event) {
-                        // Visual feedback could be added here
+                        if (dragState) {
+                            // Update drag line to follow mouse
+                            const mouseX = event.sourceEvent.clientX;
+                            const mouseY = event.sourceEvent.clientY;
+                            const svgRect = svgRef.current!.getBoundingClientRect();
+                            const svgX = mouseX - svgRect.left;
+                            const svgY = mouseY - svgRect.top;
+
+                            // Convert screen coordinates to SVG coordinates
+                            const point = svg.node()!.createSVGPoint();
+                            point.x = svgX;
+                            point.y = svgY;
+                            const transformedPoint = point.matrixTransform(svg.node()!.getScreenCTM()!.inverse());
+
+                            dragLine
+                                .attr("x2", transformedPoint.x)
+                                .attr("y2", transformedPoint.y);
+                        }
                     })
                     .on("end", function(event) {
+                        // Hide drag line
+                        dragLine.style("display", "none");
+
                         if (dragState) {
                             setDragState(null);
                         }
@@ -480,8 +528,72 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
                    .attr("fill", colors.pk);
             } else if (col.isForeignKey) {
                 row.append("circle").attr("cx", 14).attr("cy", 12).attr("r", 3).attr("fill", colors.fk);
+
+                // Add link button for existing FKs (to change relationship)
+                const linkBtn = row.append("g")
+                    .attr("transform", "translate(-8, 6)")
+                    .style("cursor", "pointer")
+                    .on("click", (event: any) => {
+                        event.stopPropagation();
+                        const rect = containerRef.current!.getBoundingClientRect();
+                        const svgRect = svgRef.current!.getBoundingClientRect();
+                        const mouseX = event.clientX - rect.left;
+                        const mouseY = event.clientY - rect.top;
+
+                        setRelationshipPopup({
+                            tableName: d.name,
+                            columnName: col.name,
+                            x: mouseX,
+                            y: mouseY
+                        });
+                    });
+
+                linkBtn.append("circle")
+                    .attr("cx", 0).attr("cy", 0).attr("r", 6)
+                    .attr("fill", colors.linkHover)
+                    .attr("stroke", colors.nodeBg)
+                    .attr("stroke-width", 1);
+
+                linkBtn.append("path")
+                    .attr("d", "M-2,-2 L2,2 M-2,2 L2,-2")
+                    .attr("stroke", colors.nodeBg)
+                    .attr("stroke-width", 1.5);
             } else {
-                 row.append("circle").attr("cx", 14).attr("cy", 12).attr("r", 2).attr("fill", colors.nodeBorder);
+                row.append("circle").attr("cx", 14).attr("cy", 12).attr("r", 2).attr("fill", colors.nodeBorder);
+
+                // Add link button for non-FK columns (to create relationship)
+                if (onCreateRelationship) {
+                    const linkBtn = row.append("g")
+                        .attr("transform", "translate(-8, 6)")
+                        .style("cursor", "pointer")
+                        .style("opacity", 0)
+                        .on("mouseenter", function() { d3.select(this).style("opacity", 1); })
+                        .on("mouseleave", function() { d3.select(this).style("opacity", 0); })
+                        .on("click", (event: any) => {
+                            event.stopPropagation();
+                            const rect = containerRef.current!.getBoundingClientRect();
+                            const mouseX = event.clientX - rect.left;
+                            const mouseY = event.clientY - rect.top;
+
+                            setRelationshipPopup({
+                                tableName: d.name,
+                                columnName: col.name,
+                                x: mouseX,
+                                y: mouseY
+                            });
+                        });
+
+                    linkBtn.append("circle")
+                        .attr("cx", 0).attr("cy", 0).attr("r", 6)
+                        .attr("fill", colors.link)
+                        .attr("stroke", colors.nodeBg)
+                        .attr("stroke-width", 1);
+
+                    linkBtn.append("path")
+                        .attr("d", "M-2,-2 L2,2 M-2,2 L2,-2")
+                        .attr("stroke", colors.nodeBg)
+                        .attr("stroke-width", 1.5);
+                }
             }
 
             // Name
@@ -565,6 +677,23 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
      }
   };
 
+  // Close popup when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (relationshipPopup && containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setRelationshipPopup(null);
+      }
+    };
+
+    if (relationshipPopup) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [relationshipPopup]);
+
   // Run initial simulation
   useEffect(() => {
     runSimulation(false);
@@ -599,13 +728,83 @@ const SchemaVisualizer: React.FC<SchemaVisualizerProps> = ({ dbState, onTogglePK
             <div className="mt-2 text-[10px] opacity-70">
                 • Scroll to Zoom<br/>
                 • Drag to Rearrange<br/>
-                • Drag PK to FK to create relationships<br/>
+                • Drag PK → FK or click ⊕ to create relationships<br/>
                 • Hover relations to highlight
             </div>
         </div>
       </div>
 
       <svg ref={svgRef} className="w-full h-full cursor-move touch-none" />
+
+      {/* Relationship Popup */}
+      {relationshipPopup && (
+        <div
+          className={`absolute z-30 p-3 rounded-lg shadow-xl border text-sm max-w-xs ${
+            isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-200' : 'bg-white border-slate-300 text-slate-800'
+          }`}
+          style={{
+            left: Math.min(relationshipPopup.x, (containerRef.current?.clientWidth || 800) - 250),
+            top: Math.min(relationshipPopup.y, (containerRef.current?.clientHeight || 600) - 200),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold">
+              Link {relationshipPopup.tableName}.{relationshipPopup.columnName}
+            </span>
+            <button
+              onClick={() => setRelationshipPopup(null)}
+              className={`p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 ${
+                isDarkMode ? 'text-slate-400' : 'text-slate-600'
+              }`}
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {dbState.tables
+              .filter(table => table.name !== relationshipPopup.tableName) // Don't show self-references
+              .flatMap(table =>
+                table.columns
+                  .filter(col => col.isPrimaryKey) // Only PK columns
+                  .map(col => ({ table, column: col }))
+              )
+              .map(({ table, column }) => (
+                <button
+                  key={`${table.name}-${column.name}`}
+                  onClick={() => {
+                    if (onCreateRelationship) {
+                      onCreateRelationship(
+                        table.name,
+                        column.name,
+                        relationshipPopup.tableName,
+                        relationshipPopup.columnName
+                      );
+                    }
+                    setRelationshipPopup(null);
+                  }}
+                  className={`w-full text-left p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700 ${
+                    isDarkMode ? 'text-slate-300' : 'text-slate-700'
+                  }`}
+                >
+                  <div className="font-medium">{table.name}.{column.name}</div>
+                  <div className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {column.type.toLowerCase()}
+                  </div>
+                </button>
+              ))}
+          </div>
+
+          {dbState.tables.filter(table => table.name !== relationshipPopup.tableName).every(table =>
+            !table.columns.some(col => col.isPrimaryKey)
+          ) && (
+            <div className={`text-xs mt-2 p-2 rounded ${isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+              No primary keys available to link
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
