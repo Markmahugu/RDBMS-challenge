@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LogEntry, QueryResult, TableSchema } from '../types';
 import ConsolePanel from './ConsolePanel';
-import { Save, RefreshCw, AlertCircle, X, Check } from 'lucide-react';
+import { Save, RefreshCw, AlertCircle, X, Check, Trash2 } from 'lucide-react';
 
 interface TableDataViewerProps {
   tableName: string;
@@ -158,6 +158,45 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
     }, 100);
   };
 
+  const handleDeleteRow = async (rowIndex: number) => {
+    if (rowIndex >= originalDataLength) {
+      // New unsaved row - just remove from local data
+      setData(prev => prev.filter((_, i) => i !== rowIndex));
+      // Remove any pending changes for this row
+      const newPendingChanges = { ...pendingChanges };
+      Object.keys(newPendingChanges).forEach(key => {
+        if (key.startsWith(`${rowIndex}-`)) {
+          delete newPendingChanges[key];
+        }
+      });
+      setPendingChanges(newPendingChanges);
+      addLog('success', 'Row removed from pending changes');
+      return;
+    }
+
+    // Existing row - delete from database
+    try {
+      // Find a unique identifier for this row (prefer primary key)
+      const row = data[rowIndex];
+      // For simplicity, we'll use the first column as identifier
+      // In a real app, you'd want to use the primary key
+      const firstCol = columns[0];
+      const identifierValue = row[firstCol];
+
+      const query = `DELETE FROM ${tableName} WHERE ${firstCol} = '${identifierValue}'`;
+      const result = await dbEngine.executeSQL(query);
+
+      if (result.success) {
+        addLog('success', `Row deleted successfully`);
+        await loadData(); // Refresh data
+      } else {
+        addLog('error', result.message || 'Failed to delete row');
+      }
+    } catch (e: any) {
+      addLog('error', e.message || 'Failed to delete row');
+    }
+  };
+
   const hasChanges = Object.keys(pendingChanges).length > 0;
 
   return (
@@ -215,9 +254,20 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
                 </thead>
                 <tbody>
                     {data.map((row, rIndex) => (
-                        <tr key={rIndex} className="hover:bg-blue-50 dark:hover:bg-slate-800/50 group">
-                            <td className="p-2 border-r border-b border-slate-100 dark:border-slate-800 text-slate-400 text-xs text-center select-none bg-slate-50 dark:bg-slate-900">
+                        <tr key={rIndex} className="hover:bg-blue-50 dark:hover:bg-slate-800/50 group relative">
+                            <td className="p-2 border-r border-b border-slate-100 dark:border-slate-800 text-slate-400 text-xs text-center select-none bg-slate-50 dark:bg-slate-900 relative">
                                 {rIndex + 1}
+                                {/* Delete button - visible on row hover */}
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteRow(rIndex);
+                                    }}
+                                    className="absolute right-1 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                                    title="Delete row"
+                                >
+                                    <Trash2 className="h-3 w-3" />
+                                </button>
                             </td>
                             {columns.map(col => {
                                 const isEditing = editingCell?.rowIndex === rIndex && editingCell?.colName === col;
@@ -235,8 +285,9 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
                                         onClick={() => !isEditing && handleCellClick(rIndex, col, row[col])}
                                     >
                                         {isEditing ? (
-                                            <input 
+                                            <input
                                                 autoFocus
+                                                aria-label={`Edit ${col} for row ${rIndex + 1}`}
                                                 className="w-full h-full p-2 bg-white dark:bg-slate-800 outline-none text-blue-600 dark:text-blue-400 absolute inset-0 z-20 shadow-inner border border-blue-500"
                                                 value={editValue}
                                                 onChange={(e) => setEditValue(e.target.value)}
@@ -245,7 +296,12 @@ const TableDataViewer: React.FC<TableDataViewerProps> = ({ tableName, dbEngine }
                                             />
                                         ) : (
                                             <div className="p-2 w-full h-full min-h-[32px] whitespace-nowrap overflow-hidden text-ellipsis flex items-center justify-between">
-                                                 <span>{displayValue !== null ? String(displayValue) : <span className="text-slate-300 italic">NULL</span>}</span>
+                                                 <span>
+                                                   {displayValue !== null && displayValue !== undefined ?
+                                                     (typeof displayValue === 'boolean' ? (displayValue ? 'TRUE' : 'FALSE') : String(displayValue)) :
+                                                    displayValue === null ? <span className="text-slate-300 italic">NULL</span> :
+                                                    <span className="text-slate-400 italic">undefined</span>}
+                                                 </span>
                                                  {isPending && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1" />}
                                             </div>
                                         )}

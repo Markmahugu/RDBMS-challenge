@@ -99,6 +99,15 @@ function App() {
   };
 
   const addTab = (type: TabItem['type'], title: string, data?: any) => {
+    // Check if a table-data tab for this table already exists
+    if (type === 'table-data' && data) {
+      const existingTab = tabs.find(t => t.type === 'table-data' && t.data === data);
+      if (existingTab) {
+        activateTab(existingTab.id);
+        return;
+      }
+    }
+
     const newId = Math.random().toString(36).substr(2, 9);
     setTabs([...tabs.map(t => ({...t, active: false})), { id: newId, type, title, active: true, data }]);
   };
@@ -356,10 +365,11 @@ function App() {
                     </button>
                 </div>
             ))}
-             <button 
-                onClick={() => addTab('sql', 'New Query')} 
+             <button
+                onClick={() => addTab('sql', 'New Query')}
                 className="px-3 text-slate-500 hover:text-blue-500 hover:bg-slate-200 dark:hover:bg-slate-800 h-full transition-colors duration-200"
-                title="New Tab"
+                title="New Query Tab"
+                aria-label="Create new query tab"
             >
                 +
             </button>
