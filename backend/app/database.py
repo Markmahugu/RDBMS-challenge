@@ -206,7 +206,7 @@ class DatabaseEngine:
 
         # Validate initial rows for integrity constraints
         for row in table.rows:
-            self._check_integrity_constraints(table, row)
+            self._check_integrity_constraints(table, row, is_insert=False)
 
         db.tables.append(table)
         self._save_state_to_disk()
@@ -246,7 +246,7 @@ class DatabaseEngine:
 
         # Validate migrated rows for integrity constraints
         for row in new_table.rows:
-            self._check_integrity_constraints(new_table, row)
+            self._check_integrity_constraints(new_table, row, is_insert=False)
 
         db.tables[table_index] = new_table
         self._save_state_to_disk()
@@ -360,7 +360,17 @@ class DatabaseEngine:
         if not table:
             raise ValueError(f"Table '{table_name}' not found")
 
-        result_data = table.rows.copy()
+        result_data = []
+        for row in table.rows:
+            new_row = row.copy()
+            # Fill in defaults for missing columns
+            for col in table.columns:
+                if col.name not in new_row:
+                    if col.defaultValue is not None:
+                        new_row[col.name] = col.defaultValue
+                    elif col.nullable:
+                        new_row[col.name] = None
+            result_data.append(new_row)
         columns = [c.name for c in table.columns]
 
         # Create execution plan
@@ -750,8 +760,18 @@ class DatabaseEngine:
                 existing_ids = [r.get(auto_inc_col.name, 0) for r in table.rows if r.get(auto_inc_col.name) is not None]
                 new_row[auto_inc_col.name] = max(existing_ids, default=0) + 1
 
+            # Apply defaults for columns not specified in INSERT
+            for col in table.columns:
+                if col.name not in new_row:
+                    if col.defaultValue is not None:
+                        new_row[col.name] = col.defaultValue
+                    elif col.nullable:
+                        new_row[col.name] = None
+                    else:
+                        raise ValueError(f"Column '{col.name}' cannot be NULL")
+
             # Check integrity constraints
-            self._check_integrity_constraints(table, new_row)
+            self._check_integrity_constraints(table, new_row, is_insert=True)
 
             table.rows.append(new_row)
             rows_inserted += 1
@@ -988,13 +1008,18 @@ class DatabaseEngine:
 
         print(f"DEBUG: Before filtering, column_defs = {column_defs}")
 
-        # Filter out table-level constraints (not column definitions)
+        # Process table-level constraints and filter out non-column definitions
+        table_constraints = []
         filtered_column_defs = []
         for col_def in column_defs:
             col_def_stripped = col_def.strip()
             first_word = col_def_stripped.upper().split()[0] if col_def_stripped.split() else ""
-            # Skip table-level constraints
-            if first_word in ['FOREIGN', 'PRIMARY', 'UNIQUE', 'CHECK', 'CONSTRAINT']:
+            # Handle table-level constraints
+            if first_word == 'FOREIGN':
+                table_constraints.append(col_def_stripped)
+                continue
+            # Skip other table-level constraints for now
+            elif first_word in ['PRIMARY', 'UNIQUE', 'CHECK', 'CONSTRAINT']:
                 continue
             filtered_column_defs.append(col_def_stripped)
 
@@ -1106,12 +1131,29 @@ class DatabaseEngine:
                 length=length,
                 nullable=nullable,
                 isPrimaryKey=is_primary_key,
+                isUnique=is_unique,
                 autoIncrement=auto_increment,
                 defaultValue=default_value,
                 isForeignKey=references is not None,
                 references=references
             )
             columns.append(column)
+
+        # Process table-level foreign key constraints
+        for constraint in table_constraints:
+            # Parse FOREIGN KEY (column_name) REFERENCES table_name(column_name)
+            fk_match = re.search(r'FOREIGN\s+KEY\s*\(\s*(\w+)\s*\)\s*REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)', constraint, re.IGNORECASE)
+            if fk_match:
+                fk_col_name = fk_match.group(1)
+                ref_table_name = fk_match.group(2)
+                ref_col_name = fk_match.group(3)
+
+                # Find the column in our columns list and update its foreign key properties
+                for col in columns:
+                    if col.name == fk_col_name:
+                        col.isForeignKey = True
+                        col.references = {'tableId': ref_table_name, 'columnId': ref_col_name}
+                        break
 
         # Create table schema
         table_schema = TableSchema(
@@ -1295,18 +1337,21 @@ class DatabaseEngine:
             executionTime=time.time() - start_time
         )
 
-    def _check_integrity_constraints(self, table: TableSchema, new_row: dict) -> None:
+    def _check_integrity_constraints(self, table: TableSchema, new_row: dict, is_insert: bool = True) -> None:
         """Check integrity constraints for INSERT operations."""
         db = self.databases[self.current_db_name]
 
         # Check NOT NULL constraints
         for col in table.columns:
+            # Skip NOT NULL check for auto-increment columns during INSERT if they don't have a value
+            if is_insert and getattr(col, 'autoIncrement', False) and new_row.get(col.name) is None:
+                continue
             if not col.nullable and new_row.get(col.name) is None:
                 raise ValueError(f"Column '{col.name}' cannot be NULL")
 
         # Check UNIQUE constraints (primary keys are unique)
         for col in table.columns:
-            if col.isPrimaryKey or 'UNIQUE' in str(col).upper():
+            if col.isPrimaryKey or getattr(col, 'isUnique', False):
                 col_value = new_row.get(col.name)
                 if col_value is not None:
                     # Check if value already exists in table
