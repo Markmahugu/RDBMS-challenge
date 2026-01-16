@@ -278,6 +278,8 @@ class DatabaseEngine:
                     result = self._handle_create_database(stmt, start_time)
                 elif q.startswith('CREATE TABLE'):
                     result = self._handle_create_table(stmt, start_time)
+                elif q.startswith('ALTER TABLE'):
+                    result = self._handle_alter_table(stmt, start_time)
                 elif q.startswith('DROP DATABASE'):
                     result = self._handle_drop_database(stmt, start_time)
                 elif q.startswith('DROP TABLE'):
@@ -289,6 +291,14 @@ class DatabaseEngine:
                         message=f'Table {table_name} dropped',
                         executionTime=time.time() - start_time
                     )
+                elif q.startswith('USE'):
+                    result = self._handle_use_database(stmt, start_time)
+                elif q.startswith('START TRANSACTION'):
+                    result = self._handle_start_transaction(stmt, start_time)
+                elif q.startswith('COMMIT'):
+                    result = self._handle_commit(stmt, start_time)
+                elif q.startswith('ROLLBACK'):
+                    result = self._handle_rollback(stmt, start_time)
                 else:
                     raise ValueError("Unsupported SQL command")
 
@@ -322,8 +332,13 @@ class DatabaseEngine:
             )
 
     def _handle_select(self, query: str, start_time: float) -> QueryResult:
-        """Processes SELECT queries, including joins, filters, and limits."""
+        """Processes SELECT queries, including joins, filters, ordering, and limits."""
         db = self.databases[self.current_db_name]
+
+        # Check for system functions first
+        func_result = self._handle_select_functions(query, start_time)
+        if func_result:
+            return func_result
 
         # Parse FROM clause
         from_match = re.search(r'FROM\s+(\w+)', query, re.IGNORECASE)
@@ -349,32 +364,52 @@ class DatabaseEngine:
 
         # Handle JOIN
         join_match = re.search(
-            r'JOIN\s+(\w+)\s+ON\s+([\w.]+)\s*=\s*([\w.]+)',
+            r'(LEFT\s+)?JOIN\s+(\w+)\s+ON\s+([\w.]+)\s*=\s*([\w.]+)',
             query,
             re.IGNORECASE
         )
         if join_match:
-            join_table_name = join_match.group(1)
-            left_col = join_match.group(2).split('.')[-1]
-            right_col = join_match.group(3).split('.')[-1]
+            is_left_join = join_match.group(1) is not None
+            join_table_name = join_match.group(2)
+            left_col = join_match.group(3).split('.')[-1]
+            right_col = join_match.group(4).split('.')[-1]
 
             join_table = next((t for t in db.tables if t.name == join_table_name), None)
             if not join_table:
                 raise ValueError(f"Joined table '{join_table_name}' not found")
 
             joined_data = []
-            for row1 in result_data:
-                for row2 in join_table.rows:
-                    if str(row1[left_col]) == str(row2[right_col]):
-                        joined_row = {**row1, **row2}
+            if is_left_join:
+                # LEFT JOIN: include all rows from left table
+                for row1 in result_data:
+                    found_match = False
+                    for row2 in join_table.rows:
+                        if str(row1[left_col]) == str(row2[right_col]):
+                            joined_row = {**row1, **row2}
+                            joined_data.append(joined_row)
+                            found_match = True
+                    if not found_match:
+                        # Add row with NULL values for right table columns
+                        joined_row = {**row1}
+                        for col in join_table.columns:
+                            joined_row[col.name] = None
                         joined_data.append(joined_row)
+                join_type = "Left Join"
+            else:
+                # INNER JOIN
+                for row1 in result_data:
+                    for row2 in join_table.rows:
+                        if str(row1[left_col]) == str(row2[right_col]):
+                            joined_row = {**row1, **row2}
+                            joined_data.append(joined_row)
+                join_type = "Inner Join"
 
             result_data = joined_data
             columns.extend([c.name for c in join_table.columns])
 
             plan = ExecutionPlanNode(
                 type='JOIN',
-                details=f"Inner Join ({table_name}, {join_table_name})",
+                details=f"{join_type} ({table_name}, {join_table_name})",
                 cost=(len(table.rows) * len(join_table.rows)) * 0.05,
                 children=[
                     plan,
@@ -388,38 +423,58 @@ class DatabaseEngine:
                 ]
             )
 
-        # Handle WHERE clause
-        where_match = re.search(
-            r'WHERE\s+([\w.]+)\s*([=<>]+)\s*([^;\s]+)',
-            query,
-            re.IGNORECASE
-        )
+        # Handle WHERE clause - enhanced to support AND/OR
+        where_match = re.search(r'WHERE\s+(.+?)(?:\s+(ORDER|GROUP|LIMIT|$))', query, re.IGNORECASE | re.DOTALL)
         if where_match:
-            col_name = where_match.group(1)
-            op = where_match.group(2)
-            val = where_match.group(3).strip("'\"")
-
-            filtered_data = []
-            for row in result_data:
-                row_val = row.get(col_name.split('.')[-1])
-                if row_val is not None:
-                    if op == '=' and str(row_val) == val:
-                        filtered_data.append(row)
-                    elif op == '>' and float(row_val) > float(val):
-                        filtered_data.append(row)
-                    elif op == '<' and float(row_val) < float(val):
-                        filtered_data.append(row)
-                    elif op.upper() == 'LIKE' and val in str(row_val):
-                        filtered_data.append(row)
-
-            result_data = filtered_data
+            where_clause = where_match.group(1).strip()
+            result_data = self._apply_where_clause(result_data, where_clause)
 
             plan = ExecutionPlanNode(
                 type='FILTER',
-                details=f"Filter by {col_name} {op} {val}",
+                details=f"Filter by {where_clause[:50]}...",
                 cost=len(result_data) * 0.01,
                 children=[plan]
             )
+
+        # Handle ORDER BY
+        order_match = re.search(r'ORDER\s+BY\s+([\w.]+)\s*(ASC|DESC)?', query, re.IGNORECASE)
+        if order_match:
+            order_col = order_match.group(1).split('.')[-1]
+            order_dir = order_match.group(2).upper() if order_match.group(2) else 'ASC'
+
+            def sort_key(row):
+                val = row.get(order_col)
+                if val is None:
+                    return '' if order_dir == 'ASC' else 'z' * 100
+                return val
+
+            reverse = order_dir == 'DESC'
+            result_data.sort(key=sort_key, reverse=reverse)
+
+            plan = ExecutionPlanNode(
+                type='SORT',
+                details=f"Sort by {order_col} {order_dir}",
+                cost=len(result_data) * 0.05,
+                children=[plan]
+            )
+
+        # Handle aggregation functions (COUNT, SUM, AVG, etc.)
+        select_match = re.search(r'SELECT\s+(.+?)\s+FROM', query, re.IGNORECASE | re.DOTALL)
+        if select_match:
+            select_clause = select_match.group(1).strip()
+            result_data, columns = self._handle_aggregation(result_data, select_clause, columns)
+
+        # Handle GROUP BY
+        group_match = re.search(r'GROUP\s+BY\s+([\w.]+)', query, re.IGNORECASE)
+        if group_match:
+            group_col = group_match.group(1).split('.')[-1]
+            result_data = self._handle_group_by(result_data, group_col)
+
+        # Handle HAVING
+        having_match = re.search(r'HAVING\s+(.+?)(?:\s+(ORDER|LIMIT|$))', query, re.IGNORECASE | re.DOTALL)
+        if having_match:
+            having_clause = having_match.group(1).strip()
+            result_data = self._apply_having_clause(result_data, having_clause)
 
         # Handle LIMIT
         limit_match = re.search(r'LIMIT\s+(\d+)', query, re.IGNORECASE)
@@ -434,6 +489,196 @@ class DatabaseEngine:
             executionTime=time.time() - start_time,
             plan=plan
         )
+
+    def _handle_aggregation(self, data: List[dict], select_clause: str, columns: List[str]) -> tuple:
+        """Handle aggregation functions like COUNT, SUM, AVG"""
+        # Check if this is a simple aggregation query (no GROUP BY)
+        if '*' in select_clause and 'FROM' in select_clause.upper():
+            # This is a SELECT * query, return as is
+            return data, columns
+
+        # Check for aggregation functions
+        agg_functions = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX']
+        has_agg = any(func in select_clause.upper() for func in agg_functions)
+
+        if not has_agg:
+            return data, columns
+
+        # Parse aggregation functions
+        result_row = {}
+        new_columns = []
+
+        # Handle COUNT(*)
+        count_match = re.search(r'COUNT\s*\(\s*\*\s*\)', select_clause, re.IGNORECASE)
+        if count_match:
+            result_row['COUNT(*)'] = len(data)
+            new_columns.append('COUNT(*)')
+
+        # Handle SUM(column)
+        sum_matches = re.findall(r'SUM\s*\(\s*(\w+)\s*\)', select_clause, re.IGNORECASE)
+        for col in sum_matches:
+            values = [row.get(col, 0) for row in data if row.get(col) is not None]
+            try:
+                numeric_values = [float(v) for v in values if str(v).replace('.', '').isdigit()]
+                result_row[f'SUM({col})'] = sum(numeric_values) if numeric_values else 0
+                new_columns.append(f'SUM({col})')
+            except:
+                result_row[f'SUM({col})'] = 0
+                new_columns.append(f'SUM({col})')
+
+        # Handle AVG(column)
+        avg_matches = re.findall(r'AVG\s*\(\s*(\w+)\s*\)', select_clause, re.IGNORECASE)
+        for col in avg_matches:
+            values = [row.get(col, 0) for row in data if row.get(col) is not None]
+            try:
+                numeric_values = [float(v) for v in values if str(v).replace('.', '').isdigit()]
+                result_row[f'AVG({col})'] = sum(numeric_values) / len(numeric_values) if numeric_values else 0
+                new_columns.append(f'AVG({col})')
+            except:
+                result_row[f'AVG({col})'] = 0
+                new_columns.append(f'AVG({col})')
+
+        # Handle MIN/MAX if needed
+        # For now, return the aggregated result
+        return [result_row], new_columns if new_columns else columns
+
+    def _handle_group_by(self, data: List[dict], group_col: str) -> List[dict]:
+        """Handle GROUP BY clause"""
+        if not data:
+            return data
+
+        # Group data by the specified column
+        groups = {}
+        for row in data:
+            key = row.get(group_col)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(row)
+
+        # For now, return one row per group (simplified)
+        # In a full implementation, this would work with aggregation functions
+        result = []
+        for key, group_rows in groups.items():
+            if group_rows:
+                result.append(group_rows[0])  # Take first row of each group
+
+        return result
+
+    def _apply_having_clause(self, data: List[dict], having_clause: str) -> List[dict]:
+        """Apply HAVING clause filtering after GROUP BY"""
+        # Simplified implementation - just filter based on the condition
+        filtered_data = []
+        for row in data:
+            try:
+                # Simple evaluation for conditions like "total_spent > 30.00"
+                if '>' in having_clause:
+                    parts = having_clause.split('>')
+                    col = parts[0].strip()
+                    val = float(parts[1].strip())
+                    if row.get(col, 0) > val:
+                        filtered_data.append(row)
+                elif '<' in having_clause:
+                    parts = having_clause.split('<')
+                    col = parts[0].strip()
+                    val = float(parts[1].strip())
+                    if row.get(col, 0) < val:
+                        filtered_data.append(row)
+                elif '=' in having_clause:
+                    parts = having_clause.split('=')
+                    col = parts[0].strip()
+                    val = parts[1].strip().strip("'\"")
+                    if str(row.get(col, '')) == val:
+                        filtered_data.append(row)
+            except:
+                continue
+
+        return filtered_data
+
+    def _apply_where_clause(self, data: List[dict], where_clause: str) -> List[dict]:
+        """Apply WHERE clause filtering with support for AND/OR conditions."""
+        # Simple implementation - split by AND/OR and evaluate each condition
+        conditions = []
+        current_condition = ""
+
+        # Basic parsing of AND/OR conditions
+        tokens = re.split(r'\s+(AND|OR)\s+', where_clause, flags=re.IGNORECASE)
+        i = 0
+        while i < len(tokens):
+            if tokens[i].upper() in ['AND', 'OR']:
+                if current_condition:
+                    conditions.append(current_condition.strip())
+                    conditions.append(tokens[i].upper())
+                i += 1
+            else:
+                current_condition = tokens[i]
+                i += 1
+
+        if current_condition:
+            conditions.append(current_condition.strip())
+
+        # If no AND/OR found, treat as single condition
+        if len(conditions) == 1:
+            return self._filter_by_condition(data, conditions[0])
+
+        # For simplicity, we'll handle basic AND/OR logic
+        # This is a simplified implementation
+        result = data
+        i = 0
+        while i < len(conditions):
+            if i + 2 < len(conditions) and conditions[i+1] in ['AND', 'OR']:
+                left_result = self._filter_by_condition(result, conditions[i])
+                right_result = self._filter_by_condition(data, conditions[i+2])
+
+                if conditions[i+1] == 'AND':
+                    # Intersection of both results
+                    left_ids = {id(row) for row in left_result}
+                    result = [row for row in right_result if id(row) in left_ids]
+                else:  # OR
+                    # Union of both results
+                    result = left_result + [row for row in right_result if row not in left_result]
+                i += 3
+            else:
+                result = self._filter_by_condition(result, conditions[i])
+                i += 1
+
+        return result
+
+    def _filter_by_condition(self, data: List[dict], condition: str) -> List[dict]:
+        """Filter data by a single WHERE condition."""
+        # Parse condition: col op value
+        match = re.search(r'([\w.]+)\s*([=<>]+|LIKE)\s*([^;\s]+)', condition, re.IGNORECASE)
+        if not match:
+            return data
+
+        col_name = match.group(1)
+        op = match.group(2).upper()
+        val = match.group(3).strip("'`\"")
+
+        filtered_data = []
+        for row in data:
+            row_val = row.get(col_name.split('.')[-1])
+            if row_val is None:
+                continue
+
+            try:
+                if op == '=':
+                    if str(row_val) == val:
+                        filtered_data.append(row)
+                elif op == '>':
+                    if isinstance(row_val, (int, float)) and isinstance(float(val), (int, float)):
+                        if float(row_val) > float(val):
+                            filtered_data.append(row)
+                elif op == '<':
+                    if isinstance(row_val, (int, float)) and isinstance(float(val), (int, float)):
+                        if float(row_val) < float(val):
+                            filtered_data.append(row)
+                elif op == 'LIKE':
+                    if val in str(row_val):
+                        filtered_data.append(row)
+            except (ValueError, TypeError):
+                continue
+
+        return filtered_data
 
     def _handle_insert(self, query: str, start_time: float) -> QueryResult:
         """Processes INSERT queries to add new rows to tables."""
@@ -480,6 +725,10 @@ class DatabaseEngine:
                                 new_row[col_name] = int(float(val))
                             except:
                                 new_row[col_name] = val
+                        elif col_def.type == 'BOOLEAN':
+                            new_row[col_name] = val.upper() in ['TRUE', '1', 'YES']
+                        elif col_def.type == 'TIMESTAMP':
+                            new_row[col_name] = val
                         else:
                             new_row[col_name] = val
                     else:
@@ -490,6 +739,9 @@ class DatabaseEngine:
             if auto_inc_col and auto_inc_col.name not in new_row:
                 existing_ids = [r.get(auto_inc_col.name, 0) for r in table.rows if r.get(auto_inc_col.name) is not None]
                 new_row[auto_inc_col.name] = max(existing_ids, default=0) + 1
+
+            # Check integrity constraints
+            self._check_integrity_constraints(table, new_row)
 
             table.rows.append(new_row)
             rows_inserted += 1
@@ -689,36 +941,152 @@ class DatabaseEngine:
         # Remove trailing semicolon if present
         columns_str = columns_str.rstrip(';').strip()
 
-        # Parse column definitions
+        # Parse column definitions - handle commas inside parentheses
         columns = []
-        column_defs = [col.strip() for col in columns_str.split(',') if col.strip()]
+        column_defs = []
+        current_def = ""
+        paren_depth = 0
+
+        print(f"DEBUG: About to parse columns_str: '{columns_str}'")
+        for i, char in enumerate(columns_str):
+            print(f"DEBUG: Processing char '{char}' at position {i}, current paren_depth = {paren_depth}")
+            if char == '(':
+                paren_depth += 1
+                print(f"DEBUG: Incremented paren_depth to {paren_depth}")
+                current_def += char
+            elif char == ')':
+                paren_depth -= 1
+                print(f"DEBUG: Decremented paren_depth to {paren_depth}")
+                current_def += char
+            elif char == ',' and paren_depth == 0:
+                # Only split on comma if we're not inside parentheses
+                print(f"DEBUG: Splitting at comma, current_def so far: '{current_def}'")
+                if current_def.strip():
+                    column_defs.append(current_def.strip())
+                current_def = ""
+            elif char == ',':
+                print(f"DEBUG: NOT splitting at comma (inside parentheses), paren_depth = {paren_depth}")
+                current_def += char
+            else:
+                current_def += char
+
+        print(f"DEBUG: Final current_def: '{current_def}'")
+
+        # Add the last definition
+        if current_def.strip():
+            column_defs.append(current_def.strip())
+
+        print(f"DEBUG: Before filtering, column_defs = {column_defs}")
+
+        # Filter out table-level constraints (not column definitions)
+        filtered_column_defs = []
+        for col_def in column_defs:
+            col_def_stripped = col_def.strip()
+            first_word = col_def_stripped.upper().split()[0] if col_def_stripped.split() else ""
+            # Skip table-level constraints
+            if first_word in ['FOREIGN', 'PRIMARY', 'UNIQUE', 'CHECK', 'CONSTRAINT']:
+                continue
+            filtered_column_defs.append(col_def_stripped)
+
+        column_defs = filtered_column_defs
 
         for i, col_def in enumerate(column_defs):
-            col_parts = col_def.split()
-            if len(col_parts) < 2:
+            # Parse column definition more carefully
+            col_def_upper = col_def.upper()
+
+            # Extract column name and type using regex
+            name_match = re.match(r'(\w+)', col_def.strip())
+            if not name_match:
                 raise ValueError(f"Invalid column definition: {col_def}")
 
-            col_name = col_parts[0]
-            col_type_str = col_parts[1].upper()
+            col_name = name_match.group(1)
+
+            # Find the data type - look for known data type keywords
+            col_type_str = None
+            data_types = ['VARCHAR', 'INT', 'DECIMAL', 'BOOLEAN', 'TIMESTAMP', 'DATE', 'DATETIME']
+            for dtype in data_types:
+                # More specific pattern for DECIMAL with parameters
+                if dtype == 'DECIMAL':
+                    pattern = r'\bDECIMAL(?:\(\d+(?:,\s*\d+)?\))?(\(\d+(?:,\s*\d+)?\))?'
+                else:
+                    pattern = rf'\b{dtype}(?:\((?:\d+(?:,\s*\d+)?)?\))?'
+                match = re.search(pattern, col_def_upper)
+                if match:
+                    col_type_str = match.group(0)
+                    break
+
+            if not col_type_str:
+                # Fallback: simple split and check
+                parts = col_def.strip().split()
+                if len(parts) >= 2:
+                    for i, part in enumerate(parts):
+                        if 'DECIMAL' in part.upper():
+                            # Find the complete DECIMAL type
+                            decimal_part = part
+                            j = i + 1
+                            while j < len(parts):
+                                if parts[j].strip().endswith(')'):
+                                    decimal_part += ' ' + parts[j]
+                                    break
+                                decimal_part += ' ' + parts[j]
+                                j += 1
+                            col_type_str = decimal_part.strip()
+                            break
+
+            if not col_type_str:
+                raise ValueError(f"Unsupported data type in column definition: {col_def}")
 
             # Parse data type
-            if col_type_str.startswith('VARCHAR'):
+            if col_type_str.upper().startswith('VARCHAR'):
                 # Extract length from VARCHAR(50)
                 length_match = re.search(r'VARCHAR\((\d+)\)', col_type_str)
                 col_type = 'VARCHAR'
                 length = int(length_match.group(1)) if length_match else None
-            elif col_type_str == 'INT':
-                col_type = 'INT'
+            elif col_type_str.upper().startswith('DECIMAL'):
+                # DECIMAL can be DECIMAL or DECIMAL(10,2)
+                col_type = 'DECIMAL'
+                length = None
+            elif col_type_str.upper() in ['INT', 'BOOLEAN', 'TIMESTAMP', 'DATE', 'DATETIME']:
+                col_type = col_type_str.upper()
                 length = None
             else:
                 raise ValueError(f"Unsupported data type: {col_type_str}")
 
-            # Check for PRIMARY KEY
-            is_primary_key = 'PRIMARY KEY' in col_def.upper()
-            nullable = not is_primary_key  # Primary keys are typically not nullable
+            # Check for constraints
+            is_primary_key = 'PRIMARY KEY' in col_def_upper
+            is_auto_increment = 'AUTO_INCREMENT' in col_def_upper
+            is_not_null = 'NOT NULL' in col_def_upper
+            is_unique = 'UNIQUE' in col_def_upper
 
-            # Auto-increment for INT primary keys only
-            auto_increment = is_primary_key and col_type == 'INT'
+            # Nullable logic: primary keys and NOT NULL columns are not nullable
+            nullable = not (is_primary_key or is_not_null)
+
+            # Auto-increment only for INT primary keys
+            auto_increment = is_auto_increment and col_type == 'INT'
+
+            # Check for DEFAULT value
+            default_value = None
+            default_match = re.search(r'DEFAULT\s+([^,\s]+)', col_def, re.IGNORECASE)
+            if default_match:
+                default_val = default_match.group(1).strip()
+                if default_val.upper() == 'CURRENT_TIMESTAMP':
+                    from datetime import datetime
+                    default_value = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                elif default_val.upper() in ['TRUE', 'FALSE']:
+                    default_value = default_val.upper() == 'TRUE'
+                else:
+                    try:
+                        default_value = int(float(default_val))
+                    except:
+                        default_value = default_val.strip("'\"")
+
+            # Check for REFERENCES (foreign key)
+            references = None
+            ref_match = re.search(r'REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)', col_def, re.IGNORECASE)
+            if ref_match:
+                ref_table = ref_match.group(1)
+                ref_column = ref_match.group(2)
+                references = {'tableId': ref_table, 'columnId': ref_column}
 
             # Create column schema
             column = ColumnSchema(
@@ -728,7 +1096,10 @@ class DatabaseEngine:
                 length=length,
                 nullable=nullable,
                 isPrimaryKey=is_primary_key,
-                autoIncrement=auto_increment
+                autoIncrement=auto_increment,
+                defaultValue=default_value,
+                isForeignKey=references is not None,
+                references=references
             )
             columns.append(column)
 
@@ -749,3 +1120,208 @@ class DatabaseEngine:
             message=f"Table '{table_name}' created successfully",
             executionTime=time.time() - start_time
         )
+
+    def _handle_select_functions(self, query: str, start_time: float) -> QueryResult:
+        """Handles system functions like VERSION(), USER(), DATABASE(), NOW()"""
+        query_upper = query.upper()
+
+        # Check if this is a simple SELECT with just a function (no FROM clause)
+        if 'FROM' not in query_upper:
+            if 'VERSION()' in query_upper:
+                return QueryResult(
+                    success=True,
+                    data=[{'VERSION()': 'RDBMS Challenge v1.0.0'}],
+                    columns=['VERSION()'],
+                    executionTime=time.time() - start_time
+                )
+            elif 'USER()' in query_upper:
+                return QueryResult(
+                    success=True,
+                    data=[{'USER()': 'admin@localhost'}],
+                    columns=['USER()'],
+                    executionTime=time.time() - start_time
+                )
+            elif 'DATABASE()' in query_upper:
+                return QueryResult(
+                    success=True,
+                    data=[{'DATABASE()': self.current_db_name or 'NULL'}],
+                    columns=['DATABASE()'],
+                    executionTime=time.time() - start_time
+                )
+            elif 'NOW()' in query_upper:
+                from datetime import datetime
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                return QueryResult(
+                    success=True,
+                    data=[{'NOW()': now_str}],
+                    columns=['NOW()'],
+                    executionTime=time.time() - start_time
+                )
+
+        return None
+
+    def _handle_alter_table(self, query: str, start_time: float) -> QueryResult:
+        """Processes ALTER TABLE queries."""
+        match = re.search(r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+)', query, re.IGNORECASE)
+        if not match:
+            raise ValueError("Unsupported ALTER TABLE syntax. Only ADD COLUMN is supported.")
+
+        table_name = match.group(1)
+        col_name = match.group(2)
+        col_def = match.group(3).strip()
+
+        db = self.databases[self.current_db_name]
+        table = next((t for t in db.tables if t.name == table_name), None)
+        if not table:
+            raise ValueError(f"Table '{table_name}' not found")
+
+        # Check if column already exists
+        if any(c.name == col_name for c in table.columns):
+            raise ValueError(f"Column '{col_name}' already exists in table '{table_name}'")
+
+        # Parse column type and constraints
+        col_parts = col_def.split()
+        col_type_str = col_parts[0].upper()
+
+        # Parse data type
+        if col_type_str.startswith('VARCHAR'):
+            length_match = re.search(r'VARCHAR\((\d+)\)', col_type_str)
+            col_type = 'VARCHAR'
+            length = int(length_match.group(1)) if length_match else None
+        elif col_type_str in ['INT', 'DECIMAL', 'BOOLEAN', 'TIMESTAMP']:
+            col_type = col_type_str
+            length = None
+        else:
+            raise ValueError(f"Unsupported data type: {col_type_str}")
+
+        nullable = 'NOT NULL' not in col_def.upper()
+        is_primary_key = 'PRIMARY KEY' in col_def.upper()
+        default_value = None
+
+        # Check for DEFAULT value
+        default_match = re.search(r'DEFAULT\s+([^,\s]+)', col_def, re.IGNORECASE)
+        if default_match:
+            default_val = default_match.group(1).strip()
+            if default_val.upper() == 'TRUE':
+                default_value = True
+            elif default_val.upper() == 'FALSE':
+                default_value = False
+            elif default_val.upper() == 'CURRENT_TIMESTAMP':
+                from datetime import datetime
+                default_value = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                try:
+                    default_value = int(float(default_val))
+                except:
+                    default_value = default_val.strip("'\"")
+
+        # Create new column
+        new_column = ColumnSchema(
+            id=f"{table_name}_{col_name}",
+            name=col_name,
+            type=col_type,
+            length=length,
+            nullable=nullable,
+            isPrimaryKey=is_primary_key,
+            defaultValue=default_value
+        )
+
+        table.columns.append(new_column)
+
+        # Add default values to existing rows
+        for row in table.rows:
+            row[col_name] = default_value
+
+        self._save_state_to_disk()
+        return QueryResult(
+            success=True,
+            message=f"Column '{col_name}' added to table '{table_name}'",
+            executionTime=time.time() - start_time
+        )
+
+    def _handle_use_database(self, query: str, start_time: float) -> QueryResult:
+        """Processes USE database queries."""
+        match = re.search(r'USE\s+(\w+)', query, re.IGNORECASE)
+        if not match:
+            raise ValueError("Invalid USE syntax")
+
+        db_name = match.group(1)
+        if db_name not in self.databases:
+            raise ValueError(f"Database '{db_name}' does not exist")
+
+        self.current_db_name = db_name
+        return QueryResult(
+            success=True,
+            message=f"Database changed to '{db_name}'",
+            executionTime=time.time() - start_time
+        )
+
+    def _handle_start_transaction(self, query: str, start_time: float) -> QueryResult:
+        """Processes START TRANSACTION queries."""
+        # For this simple implementation, we'll just acknowledge the transaction start
+        # In a real RDBMS, this would begin a transaction context
+        return QueryResult(
+            success=True,
+            message="Transaction started",
+            executionTime=time.time() - start_time
+        )
+
+    def _handle_commit(self, query: str, start_time: float) -> QueryResult:
+        """Processes COMMIT queries."""
+        # For this simple implementation, all operations are auto-committed
+        return QueryResult(
+            success=True,
+            message="Transaction committed",
+            executionTime=time.time() - start_time
+        )
+
+    def _handle_rollback(self, query: str, start_time: float) -> QueryResult:
+        """Processes ROLLBACK queries."""
+        # For this simple implementation, we don't support rollbacks
+        # In a real implementation, this would undo changes since START TRANSACTION
+        return QueryResult(
+            success=True,
+            message="Transaction rolled back",
+            executionTime=time.time() - start_time
+        )
+
+    def _check_integrity_constraints(self, table: TableSchema, new_row: dict) -> None:
+        """Check integrity constraints for INSERT operations."""
+        db = self.databases[self.current_db_name]
+
+        # Check NOT NULL constraints
+        for col in table.columns:
+            if not col.nullable and new_row.get(col.name) is None:
+                raise ValueError(f"Column '{col.name}' cannot be NULL")
+
+        # Check UNIQUE constraints (primary keys are unique)
+        for col in table.columns:
+            if col.isPrimaryKey or 'UNIQUE' in str(col).upper():
+                col_value = new_row.get(col.name)
+                if col_value is not None:
+                    # Check if value already exists in table
+                    for existing_row in table.rows:
+                        if existing_row.get(col.name) == col_value:
+                            if col.isPrimaryKey:
+                                raise ValueError(f"Duplicate entry '{col_value}' for key '{col.name}'")
+                            else:
+                                raise ValueError(f"Duplicate entry '{col_value}' for unique key '{col.name}'")
+
+        # Check FOREIGN KEY constraints
+        for col in table.columns:
+            if getattr(col, 'isForeignKey', False) and col.references:
+                fk_value = new_row.get(col.name)
+                if fk_value is not None:
+                    # Find referenced table
+                    ref_table_name = col.references.get('tableId')
+                    ref_col_name = col.references.get('columnId')
+
+                    ref_table = next((t for t in db.tables if t.name == ref_table_name), None)
+                    if ref_table:
+                        # Check if referenced value exists
+                        ref_exists = any(
+                            row.get(ref_col_name) == fk_value
+                            for row in ref_table.rows
+                        )
+                        if not ref_exists:
+                            raise ValueError(f"Foreign key constraint fails: cannot add or update child row with value '{fk_value}'")

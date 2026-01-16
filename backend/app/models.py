@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional, Literal
 from pydantic import BaseModel
 
 
-DataType = Literal['INT', 'VARCHAR', 'TEXT', 'DATE', 'DATETIME', 'DECIMAL', 'BOOLEAN']
+DataType = Literal['INT', 'VARCHAR', 'TEXT', 'DATE', 'DATETIME', 'DECIMAL', 'BOOLEAN', 'TIMESTAMP']
 
 
 class ColumnSchema(BaseModel):

@@ -2,9 +2,5 @@
     "DemoDB": {
         "name": "DemoDB",
         "tables": []
-    },
-    "test_db": {
-        "name": "test_db",
-        "tables": []
     }
 }
